@@ -1,0 +1,1 @@
+-- No additional components needed for this plugin

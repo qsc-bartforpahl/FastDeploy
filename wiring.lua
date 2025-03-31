@@ -1,0 +1,1 @@
+-- No wiring needed for this plugin

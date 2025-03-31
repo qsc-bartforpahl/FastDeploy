@@ -1,0 +1,8 @@
+{
+  "version": "1.0.1",
+  "type": "LuaPlugin",
+  "author": "Bartholomew Forpahl",
+  "description": "Fast Deploy enables quick pairing of inventory items to peripherals on the network",
+  "requiredVersion": "9.0",
+  "id": "fast-deploy-plugin"
+} 

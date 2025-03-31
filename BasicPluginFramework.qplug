@@ -1,0 +1,153 @@
+-- Basic Framework Plugin
+-- by QSC
+-- October 2020
+
+-- Information block for the plugin
+PluginInfo = {
+  Name = "Base Plugin",
+  Version = "0.0",
+  BuildVersion = "0.0.0.0",
+  Id = "<guid>",
+  Author = "Your_Company",
+  Description = "A very basic plugin"  
+}
+
+-- Define the color of the plugin object in the design
+function GetColor(props)
+  return { 102, 102, 102 }
+end
+
+-- The name that will initially display when dragged into a design
+function GetPrettyName(props)
+  return "My First Plugin, version " .. PluginInfo.Version
+end
+
+-- Optional function used if plugin has multiple pages
+PageNames = { "Control", "Setup" }  --List the pages within the plugin
+function GetPages(props)
+  local pages = {}
+  for ix,name in ipairs(PageNames) do
+    table.insert(pages, {name = PageNames[ix]})
+  end
+  return pages
+end
+
+-- Optional function to define model if plugin supports more than one model
+function GetModel(props)
+  local model = {}
+  if props.Model ~= nil and props.Model.Value ~= "" then
+    table.insert(model, { props.Model.Value } )
+  else
+    table.insert(model, { "Base Model" } )
+  end
+ return model
+end
+
+-- Define User configurable Properties of the plugin
+function GetProperties()
+  local props = {}
+  table.insert(props, {
+    Name = "Debug Print",
+    Type = "enum",
+    Choices = {"None", "Tx/Rx", "Tx", "Rx", "Function Calls", "All"},
+    Value = "None"
+  })
+  return props
+end
+
+-- Optional function to define pins on the plugin that are not connected to a Control
+function GetPins(props)
+  local pins = {}
+  table.insert(pins,{
+    Name = "Audio Output",
+    Direction = "output",
+  })
+  return pins
+end
+
+-- Optional function to update available properties when properties are altered by the user
+function RectifyProperties(props)
+  if props.plugin_show_debug.Value == false then 
+    props["Debug Print"].IsHidden = true 
+  end
+  return props
+end
+
+-- Optional function to define components used within the plugin
+function GetComponents(props)
+  local components = {}
+  table.insert(components,{
+    Name = "main_mixer",
+    Type = "mixer",
+    Properties =   
+    {
+      ["n_inputs"] = 8,
+      ["n_outputs"] = 1,
+    }
+  })
+  return components
+end
+
+-- Optional function to define wiring of components used within the plugin
+function GetWiring(props)
+  local wiring = {}
+  table.insert( wiring, { "Audio Output", "main_mixer Output 1" } )
+  return wiring
+end
+
+-- Defines the Controls used within the plugin
+function GetControls(props)
+  local ctrls = {}
+  table.insert(ctrls, {
+    Name = "SendButton",
+    ControlType = "Button",
+    ButtonType = "Momentary",
+    Count = 1,
+    UserPin = true,
+    PinStyle = "Input",
+    Icon = "Power"
+  })
+  return ctrls
+end
+
+--Layout of controls and graphics for the plugin UI to display
+function GetControlLayout(props)
+  local layout = {}
+  local graphics = {}
+  local CurrentPage = PageNames[props["page_index"].Value]
+  if CurrentPage == "Control" then
+    table.insert(graphics,{
+      Type = "GroupBox",
+      Text = "Control",
+      Fill = {200,200,200},
+      StrokeWidth = 1,
+      Position = {5,5},
+      Size = {200,100}
+    })
+    table.insert(graphics,{
+      Type = "Text",
+      Text = "Say Hello:",
+      Position = {10,42},
+      Size = {90,16},
+      FontSize = 14,
+      HTextAlign = "Right"
+    })
+    layout["SendButton"] = {
+      PrettyName = "Buttons~Send The Command",
+      Style = "Button",
+      Position = {105,42},
+      Size = {50,16},
+      Color = {0,0,0}
+    }
+  elseif CurrentPage == "Setup" then
+    -- TBD
+  end
+  return layout, graphics
+end
+
+--Start event based logic
+if Controls then
+  Controls.SendButton.EventHandler = function()
+    print("Hello, World!")
+  end
+end
