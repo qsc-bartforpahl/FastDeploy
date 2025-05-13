@@ -1,11 +1,5 @@
-
-
 local CurrentPage = PageNames[props["page_index"].Value]
 local deviceCount = props["Device Count"].Value
-
-
-
-
 
 layout["code"]={
   PrettyName="code",
@@ -445,6 +439,28 @@ elseif CurrentPage == "Network Device List" then
     Fill = {194,194,194},
     
     FontSize = 9
+  }
+
+  -- Refresh section
+  -- table.insert(graphics, {
+  --   Type = "GroupBox",
+  --   Text = "Refresh Devices",
+  --   Fill = {213,233, 215},
+  --   StrokeWidth = 1,
+  --   StrokeColor = {0,0,0},
+  --   CornerRadius = 8,
+  --   Position = {288,14},
+  --   Size = {204, 63},
+  --   FontSize = 12
+  -- })
+
+  layout["Get"] = {
+    PrettyName = "Action~Refresh",
+    Style = "Button",
+    Position = {288,32},
+    Size = {204, 32},
+    Color = {236, 236, 236},
+    Legend = "Refresh"
   }
 
   layout["CurrentLanBConfig"] = {
