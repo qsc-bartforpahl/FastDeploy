@@ -6,7 +6,7 @@
 PluginInfo = {
   Name = "Fast Deploy",
   Version = "1.0.0",
-  BuildVersion = "2.1.0.1",
+  BuildVersion = "2.1.0.2",
   Id = "fd8e3b7a-cb15-4fc9-a49d-8b84cff615c8",
   Author = "Bartholomew Forpahl",
   Description = "A plugin for fast deployment of Q-SYS peripherals"  
@@ -452,14 +452,8 @@ end
 function GetControlLayout(props)
   local layout = {}
   local graphics = {}
-  
-  
   local CurrentPage = PageNames[props["page_index"].Value]
   local deviceCount = props["Device Count"].Value
-  
-  
-  
-  
   
   layout["code"]={
     PrettyName="code",
@@ -899,6 +893,28 @@ function GetControlLayout(props)
       Fill = {194,194,194},
       
       FontSize = 9
+    }
+  
+    -- Refresh section
+    -- table.insert(graphics, {
+    --   Type = "GroupBox",
+    --   Text = "Refresh Devices",
+    --   Fill = {213,233, 215},
+    --   StrokeWidth = 1,
+    --   StrokeColor = {0,0,0},
+    --   CornerRadius = 8,
+    --   Position = {288,14},
+    --   Size = {204, 63},
+    --   FontSize = 12
+    -- })
+  
+    layout["Get"] = {
+      PrettyName = "Action~Refresh",
+      Style = "Button",
+      Position = {288,32},
+      Size = {204, 32},
+      Color = {236, 236, 236},
+      Legend = "Refresh"
     }
   
     layout["CurrentLanBConfig"] = {
