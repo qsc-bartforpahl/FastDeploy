@@ -123,6 +123,33 @@ table.insert(ctrls, {
 })
 
 table.insert(ctrls, { 
+  Name = "InventoryLocation", 
+  ControlType = "Text", 
+  Constraint = "List", 
+  UserPin = true,
+  PinStyle = "Input",
+  Count = 1
+})
+
+table.insert(ctrls, { 
+  Name = "OneShotNextUp", 
+  ControlType = "Text", 
+  Count = 1
+})
+
+table.insert(ctrls, { 
+  Name = "OneShotToBePaired", 
+  ControlType = "Text", 
+  Count = 1
+})
+
+table.insert(ctrls, { 
+  Name = "OneShotPaired", 
+  ControlType = "Text", 
+  Count = 1
+})
+
+table.insert(ctrls, { 
   Name = "AssignToDevice", 
   ControlType = "Text", 
   Constraint = "List", 
@@ -342,7 +369,45 @@ table.insert(ctrls, {
   UserPin = true,
   PinStyle = "Input",
   Count = 1
-})  
+})
+
+-- Leaderboards (pairing analytics)
+table.insert(ctrls, {
+  Name = "LeaderboardSummary",
+  ControlType = "Text",
+  Count = 1
+})
+
+table.insert(ctrls, {
+  Name = "LeaderboardFastest",
+  ControlType = "Text",
+  Count = 1
+})
+
+table.insert(ctrls, {
+  Name = "LeaderboardSlowest",
+  ControlType = "Text",
+  Count = 1
+})
+
+table.insert(ctrls, {
+  Name = "LeaderboardByType",
+  ControlType = "Text",
+  Count = 1
+})
+
+table.insert(ctrls, {
+  Name = "LeaderboardTimeSaved",
+  ControlType = "Text",
+  Count = 1
+})
+
+table.insert(ctrls, {
+  Name = "LeaderboardResetStats",
+  ControlType = "Button",
+  ButtonType = "Trigger",
+  Count = 1
+})
 
 
 

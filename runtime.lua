@@ -21,6 +21,12 @@ Inventory = {
   NameToModel = {},       -- Mapping: name -> model
   ByModel = {},           -- Lookup: model -> list of names
   ByModelLookup = {},     -- Tracks models in ByModel
+  NameToLocation = {},    -- Mapping: name -> location
+  Locations = {""},       -- Unique design locations
+  LocationsLookup = {[""] = true},
+  ByModelAndLocation = {}, -- model -> location -> { names }
+  ModelsByLocation = {},  -- location -> { models }
+  ModelsByLocationLookup = {},
   Types = {               -- Supported device types
     ["Network Microphone"] = true, ["Camera"] = true, ["Network Loudspeaker"] = true,
     ["Control I/O"] = true, ["Amplifier"] = true, ["Audio I/O"] = true,
@@ -32,10 +38,229 @@ Inventory = {
 LastStatusCodes = {}        -- Tracks last known status codes for inventory items
 inventoryTimer = Timer.New() -- Timer for periodic inventory updates
 RefreshTimer = Timer.New()
+-- One-shot Pair by ID queue state
+OneShotQueue = {}
+OneShotIndex = 0
+OneShotLocation = ""
+OneShotModel = ""
+OneShotPaired = {}
+oneShotListUpdating = false
+
+-- Pairing analytics (Leaderboards)
+PairingRecords = {}
+PairingAttemptInFlight = nil
+MANUAL_PAIR_BENCHMARK_SEC = 180
+
+function cancelPairingAttempt()
+  PairingAttemptInFlight = nil
+end
+
+function updatePairingAttemptContext(name, model, location)
+  if not PairingAttemptInFlight then return end
+  if name and name ~= "" then PairingAttemptInFlight.name = name end
+  if model and model ~= "" then PairingAttemptInFlight.model = model end
+  if location and location ~= "" then PairingAttemptInFlight.location = location end
+end
+
+function startPairingAttempt(name, model, location)
+  PairingAttemptInFlight = {
+    startTime = Timer.Now(),
+    name = name or "",
+    model = model or "",
+    location = location or ""
+  }
+end
+
+function resolvePairingModel(inflight, modelOverride)
+  if modelOverride and modelOverride ~= "" then return modelOverride end
+  if inflight.model ~= "" then return inflight.model end
+  if inflight.name ~= "" then
+    return Inventory.NameToModel[inflight.name] or DeviceTypeLookup[inflight.name] or "Unknown"
+  end
+  return "Unknown"
+end
+
+function finishPairingAttempt(outcome, modelOverride)
+  if not PairingAttemptInFlight then return end
+  local inflight = PairingAttemptInFlight
+  PairingAttemptInFlight = nil
+  local durationSec = Timer.Now() - inflight.startTime
+  table.insert(PairingRecords, {
+    name = inflight.name,
+    model = resolvePairingModel(inflight, modelOverride),
+    location = inflight.location,
+    durationSec = durationSec,
+    outcome = outcome,
+    finishedAt = Timer.Now()
+  })
+  refreshLeaderboardDisplay()
+end
+
+function resetPairingAnalytics()
+  PairingRecords = {}
+  PairingAttemptInFlight = nil
+  refreshLeaderboardDisplay()
+end
+
+function formatPairingDuration(sec)
+  if sec < 60 then
+    return string.format("%.1fs", sec)
+  end
+  local min = math.floor(sec / 60)
+  local rem = sec - (min * 60)
+  return string.format("%d min %.0fs", min, rem)
+end
+
+function formatTimeSavedDisplay(totalCount, totalSec)
+  if totalCount == 0 then
+    return "Benchmark: 3 min per device — no pairings yet"
+  end
+  local benchmarkSec = totalCount * MANUAL_PAIR_BENCHMARK_SEC
+  local savedSec = benchmarkSec - totalSec
+  local absMin = math.floor(math.abs(savedSec) / 60 + 0.5)
+  local hrs = math.floor(absMin / 60)
+  local mins = absMin % 60
+  if savedSec >= 0 then
+    return string.format("TIME SAVED: %d min (%d hr %d min) vs manual @ 3 min/device", absMin, hrs, mins)
+  end
+  return string.format("OVER BENCHMARK: %d min (%d hr %d min) slower than manual @ 3 min/device", absMin, hrs, mins)
+end
+
+function getFastestPairingRecords(sourceRecords, limit)
+  local sorted = {}
+  local src = sourceRecords or PairingRecords
+  for i, rec in ipairs(src) do
+    sorted[i] = rec
+  end
+  table.sort(sorted, function(a, b) return a.durationSec < b.durationSec end)
+  local result = {}
+  for i = 1, math.min(limit or 10, #sorted) do
+    result[i] = sorted[i]
+  end
+  return result
+end
+
+function getSlowestPairingRecords(sourceRecords, limit)
+  local sorted = {}
+  local src = sourceRecords or PairingRecords
+  for i, rec in ipairs(src) do
+    sorted[i] = rec
+  end
+  table.sort(sorted, function(a, b) return a.durationSec > b.durationSec end)
+  local result = {}
+  for i = 1, math.min(limit or 10, #sorted) do
+    result[i] = sorted[i]
+  end
+  return result
+end
+
+function getModelRollups(records)
+  local byModel = {}
+  for _, rec in ipairs(records or PairingRecords) do
+    local model = rec.model ~= "" and rec.model or "Unknown"
+    local rollup = byModel[model]
+    if not rollup then
+      rollup = {
+        count = 0,
+        totalSec = 0,
+        avgSec = 0,
+        fastestSec = nil,
+        slowestSec = nil,
+        fastestName = "",
+        slowestName = ""
+      }
+      byModel[model] = rollup
+    end
+    rollup.count = rollup.count + 1
+    rollup.totalSec = rollup.totalSec + rec.durationSec
+    if not rollup.fastestSec or rec.durationSec < rollup.fastestSec then
+      rollup.fastestSec = rec.durationSec
+      rollup.fastestName = rec.name
+    end
+    if not rollup.slowestSec or rec.durationSec > rollup.slowestSec then
+      rollup.slowestSec = rec.durationSec
+      rollup.slowestName = rec.name
+    end
+    rollup.avgSec = rollup.totalSec / rollup.count
+  end
+  return byModel
+end
+
+function getModelRanking(byModel)
+  local ranking = {}
+  for model, rollup in pairs(byModel) do
+    table.insert(ranking, {
+      model = model,
+      count = rollup.count,
+      avgSec = rollup.avgSec,
+      fastestSec = rollup.fastestSec,
+      slowestSec = rollup.slowestSec
+    })
+  end
+  table.sort(ranking, function(a, b)
+    if a.avgSec ~= b.avgSec then return a.avgSec < b.avgSec end
+    return a.count > b.count
+  end)
+  return ranking
+end
+
+function formatDeviceRankingLines(records, emptyText)
+  if #records == 0 then
+    return emptyText or "  --- NO SCORES YET ---"
+  end
+  local lines = {" RANK  DEVICE               TYPE         TIME"}
+  for i, rec in ipairs(records) do
+    local name = rec.name ~= "" and rec.name or "(unnamed)"
+    if #name > 20 then name = name:sub(1, 17) .. "..." end
+    local model = rec.model ~= "" and rec.model or "?"
+    if #model > 10 then model = model:sub(1, 7) .. "..." end
+    table.insert(lines, string.format(" %2d    %-20s  %-10s  %7.1fs", i, name, model, rec.durationSec))
+  end
+  return table.concat(lines, "\n")
+end
+
+function formatModelRankingLines(ranking)
+  if #ranking == 0 then
+    return "  --- NO DEVICE TYPES YET ---"
+  end
+  local lines = {" RANK  TYPE         COUNT   AVG      FAST     SLOW"}
+  for i, entry in ipairs(ranking) do
+    local model = entry.model
+    if #model > 10 then model = model:sub(1, 7) .. "..." end
+    table.insert(lines, string.format(" %2d    %-10s  %5d  %6.1fs  %6.1fs  %6.1fs",
+      i, model, entry.count, entry.avgSec, entry.fastestSec, entry.slowestSec))
+  end
+  return table.concat(lines, "\n")
+end
+
+function refreshLeaderboardDisplay()
+  if not Controls.LeaderboardSummary then return end
+  local records = PairingRecords
+  local totalCount = #records
+  local totalSec = 0
+  for _, rec in ipairs(records) do
+    totalSec = totalSec + rec.durationSec
+  end
+  local avgSec = totalCount > 0 and (totalSec / totalCount) or 0
+
+  if totalCount == 0 then
+    Controls.LeaderboardSummary.String = "DEVICES: 0    TOTAL: --    AVG: --    INSERT COIN... PRESS PAIR WITH ID!"
+  else
+    Controls.LeaderboardSummary.String = string.format(
+      "DEVICES: %d    TOTAL: %s    AVG: %s per device",
+      totalCount, formatPairingDuration(totalSec), formatPairingDuration(avgSec))
+  end
+
+  Controls.LeaderboardFastest.String = formatDeviceRankingLines(getFastestPairingRecords(records, 10))
+  Controls.LeaderboardSlowest.String = formatDeviceRankingLines(getSlowestPairingRecords(records, 10))
+  Controls.LeaderboardByType.String = formatModelRankingLines(getModelRanking(getModelRollups(records)))
+  Controls.LeaderboardTimeSaved.String = formatTimeSavedDisplay(totalCount, totalSec)
+end
+
 -- Network globals
-broadcastRange = ""         -- Broadcast address for the network
-netMask = ""          -- Subnet mask for the network
-t = 1                 -- Global index for device control updates
+broadcastRange = ""
+netMask = ""
+t = 1
 
 --Debug level settings
 DebugSetting = Properties["Debug Print"].Value
@@ -196,12 +421,53 @@ end
 
 
 
+-- **Rebuild location/model indexes from design inventory**
+function rebuildLocationIndexes()
+  Inventory.Locations = {""}
+  Inventory.LocationsLookup = {[""] = true}
+  Inventory.ByModelAndLocation = {}
+  Inventory.ModelsByLocation = {}
+  Inventory.ModelsByLocationLookup = {}
+  Inventory.NameToLocation = {}
+
+  for _, v in pairs(Design.GetInventory()) do
+    if Inventory.Types[v.Type] or v.Type == "" then
+      local model, name, location = v.Model, v.Name, v.Location or ""
+      Inventory.NameToLocation[name] = location
+
+      if not Inventory.LocationsLookup[location] then
+        table.insert(Inventory.Locations, location)
+        Inventory.LocationsLookup[location] = true
+      end
+
+      if not Inventory.ByModelAndLocation[model] then
+        Inventory.ByModelAndLocation[model] = {}
+      end
+      if not Inventory.ByModelAndLocation[model][location] then
+        Inventory.ByModelAndLocation[model][location] = {}
+      end
+      table.insert(Inventory.ByModelAndLocation[model][location], name)
+
+      if not Inventory.ModelsByLocation[location] then
+        Inventory.ModelsByLocation[location] = {}
+        Inventory.ModelsByLocationLookup[location] = {}
+      end
+      if not Inventory.ModelsByLocationLookup[location][model] then
+        table.insert(Inventory.ModelsByLocation[location], model)
+        Inventory.ModelsByLocationLookup[location][model] = true
+      end
+    end
+  end
+  Controls.InventoryLocation.Choices = Inventory.Locations
+end
+
 -- **Update inventory from design data and detect status changes**
 function updateInventory()
   if refresh == true then
     getDevices()
   end
   local statusChanged = false
+  rebuildLocationIndexes()
   
   for _, v in pairs(Design.GetInventory()) do
     local model, name, code = v.Model, v.Name, v.Status.Code
@@ -238,6 +504,7 @@ function updateInventory()
       getDevices()
   end
 end
+
 -- Start inventory update timer (runs every 5 seconds)
 inventoryTimer.EventHandler = updateInventory
 inventoryTimer:Start(5)
@@ -467,6 +734,7 @@ function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode)
     Headers = { ["Content-Type"] = "text/xml" },
     EventHandler = function(_, code, data)
       DebugNetworkResponse("https://" .. originalIP .. "/cgi-bin/network_configuration_xml", code, data)
+      local analyticsActive = PairingAttemptInFlight ~= nil
       if code == 200 then
         DebugPrint("Successfully configured " .. newName, "rx")
         if mode == "static" then
@@ -479,21 +747,39 @@ function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode)
           Timer.CallAfter(function()buildDirectionsString() Controls.Assign.IsDisabled = true end,5) 
         end 
         Peripherals[newName] = { ip = ip }
-        
         if oldName ~= newName then Peripherals[oldName] = nil end
-        Controls.InventoryName.String = ""
-        DebugPrint("Setting assign to device choices to empty", "function")
-        Controls.AssignToDevice.Choices = {}
+
+        if analyticsActive then
+          finishPairingAttempt("success", model)
+        end
+
+        if OneShotIndex > 0 then
+          advanceOneShot()
+        else
+          Controls.InventoryName.String = ""
+          DebugPrint("Setting assign to device choices to empty", "function")
+          Controls.AssignToDevice.Choices = {}
+          if Controls.PairWithID.Boolean then
+            PairingMode(false)
+          end
+        end
+        Controls.AssignToDevice.String = ""
       else
         DebugPrint("Failed to configure " .. newName .. ": " .. data, "rx")
         DisplayPrint("\nFailed to set static for " .. newName .. ": " .. data)
+        if analyticsActive then
+          finishPairingAttempt("failure", model)
+        end
+        if OneShotIndex > 0 then
+          OneShotPairingMode(false)
+        end
       end
-      if Controls.PairWithID.Boolean then
-        PairingMode()
-        Controls.PairWithID.Boolean = false
-        PairingMode()
+      if OneShotIndex <= 0 and Controls.PairWithID.Boolean then
+        PairingMode(false)
       end
-      Controls.AssignToDevice.String = ""
+      if OneShotIndex <= 0 then
+        Controls.AssignToDevice.String = ""
+      end
     end
   })
   DebugFunctionExit("setPeripheral")
@@ -583,12 +869,14 @@ function applyAssign(device)
   
   if checkAndResetNameIfNeeded(device) then
       DebugPrint("Name reset needed, returning early", "function")
+      if PairingAttemptInFlight then finishPairingAttempt("failure") end
       return
   end
 
   if Controls.InventoryName.String == "" then
       DebugPrint("Error: Inventory Name cannot be empty", "function")
       DisplayPrint("\nError: Inventory Name cannot be empty")
+      if PairingAttemptInFlight then finishPairingAttempt("failure") end
       return
   end
   if Controls.AssignToDevice.String == "" and not Controls.PairWithID.Boolean then
@@ -610,6 +898,7 @@ function applyAssign(device)
   if not originalIP then
       DebugPrint("Error: Could not find IP for device " .. oldName, "function")
       DisplayPrint("\nError: Could not find IP for device " .. oldName)
+      if PairingAttemptInFlight then finishPairingAttempt("failure") end
       return
   end
 
@@ -724,6 +1013,233 @@ function listenForIDMode(model)
   RefreshTimer:Start(5)
 end
 
+-- **One-shot Pair by ID queue functions**
+
+function buildOneShotQueue(location, model)
+  local queue = {}
+  if location == "" or model == "" then
+    return queue
+  end
+  if Inventory.ByModelAndLocation[model] and Inventory.ByModelAndLocation[model][location] then
+    for _, name in ipairs(Inventory.ByModelAndLocation[model][location]) do
+      table.insert(queue, name)
+    end
+  end
+  return queue
+end
+
+function isOneShotPaired(name)
+  for _, p in ipairs(OneShotPaired) do
+    if p == name then return true end
+  end
+  return false
+end
+
+function findNextOneShotIndex(fromIndex)
+  for i = fromIndex + 1, #OneShotQueue do
+    if not isOneShotPaired(OneShotQueue[i]) then
+      return i
+    end
+  end
+  return 0
+end
+
+function selectOneShotTarget(name)
+  if name == "" or oneShotListUpdating then
+    return
+  end
+  if isOneShotPaired(name) then
+    DisplayPrint("⚠ " .. name .. " is already paired")
+    return
+  end
+  for i, queueName in ipairs(OneShotQueue) do
+    if queueName == name then
+      if Controls.PairWithID.Boolean then
+        OneShotPairingMode(false)
+      end
+      local skipped = false
+      if i > OneShotIndex and OneShotIndex > 0 then
+        for j = OneShotIndex, i - 1 do
+          if not isOneShotPaired(OneShotQueue[j]) then
+            skipped = true
+            break
+          end
+        end
+      end
+      OneShotIndex = i
+      Controls.OneShotNextUp.String = name
+      updateOneShotLists()
+      updateOneShotPairWithIdState()
+      buildOneShotDirections()
+      if skipped then
+        DisplayPrint("Skipped ahead to " .. name)
+      end
+      return
+    end
+  end
+end
+
+function updateOneShotLists()
+  local pending = {}
+  for _, name in ipairs(OneShotQueue) do
+    if not isOneShotPaired(name) then
+      table.insert(pending, name)
+    end
+  end
+  oneShotListUpdating = true
+  Controls.OneShotToBePaired.Choices = pending
+  Controls.OneShotPaired.Choices = OneShotPaired
+  if OneShotIndex > 0 and OneShotIndex <= #OneShotQueue then
+    Controls.OneShotToBePaired.String = OneShotQueue[OneShotIndex]
+  else
+    Controls.OneShotToBePaired.String = ""
+  end
+  Controls.OneShotPaired.String = ""
+  oneShotListUpdating = false
+end
+
+function updateOneShotPairWithIdState()
+  local active = false
+  if OneShotIndex > 0 and OneShotIndex <= #OneShotQueue then
+    active = not isOneShotPaired(OneShotQueue[OneShotIndex])
+  end
+  Controls.PairWithID.IsDisabled = not active
+end
+
+function buildOneShotDirections()
+  local header = "--Caution! ID pairing is not supported on all devices. Only pair devices intended for this system.\n\n"
+  local step1 = "1. Select a location from inventory" .. (Controls.InventoryLocation.String ~= "" and " ✓" or "")
+  local step2 = "2. Select a model from the inventory" .. (Controls.InventoryModel.String ~= "" and " ✓" or "")
+  local step3 = "3. Press Pair With ID when ready"
+  local step4 = "4. Press the ID button on the device"
+  local directions = header .. step1
+  if Controls.InventoryLocation.String ~= "" then
+    directions = directions .. "\n" .. step2
+  end
+  if Controls.InventoryLocation.String ~= "" and Controls.InventoryModel.String ~= "" then
+    directions = directions .. "\n" .. step3
+    if Controls.PairWithID.Boolean then
+      directions = directions .. "\n" .. step4
+    end
+  end
+  if OneShotIndex > 0 and OneShotIndex <= #OneShotQueue then
+    directions = directions .. "\n\nNext: " .. OneShotQueue[OneShotIndex] .. "  (tap To Be Paired to skip)"
+  elseif #OneShotQueue > 0 and OneShotIndex == 0 then
+    directions = directions .. "\n\nAll devices paired!"
+  end
+  Controls.PairWithIdDirections[1].String = directions
+end
+
+function OneShotPairingMode(b)
+  if b then
+    if OneShotIndex < 1 or OneShotIndex > #OneShotQueue then return end
+    Controls.PairWithID.Boolean = true
+    Controls.InventoryName.String = OneShotQueue[OneShotIndex]
+    namecheckID = true
+    modelcheckID = Controls.InventoryModel.String ~= ""
+    Controls.IPMode.Boolean = false
+    for i = 1, #Controls.ID do
+      Controls.ID[i].IsDisabled = true
+      if Controls.DeviceName[i].String ~= "" then
+        local ip = Controls.DeviceIP[i].String
+        local devName = Controls.DeviceName[i].String
+        local idx = i
+        HttpClient.Download({
+          Url = "https://" .. ip .. "/cgi-bin/id_mode?mode=off",
+          Timeout = 30,
+          Headers = {},
+          EventHandler = function(_, code, data)
+            Timer.CallAfter(function() downloadFromPeripherals(ip, devName, idx) end, 1)
+          end
+        })
+      end
+    end
+    listenForIDMode(string.upper(Controls.InventoryModel.String))
+    startPairingAttempt(
+      OneShotQueue[OneShotIndex],
+      Controls.InventoryModel.String,
+      Controls.InventoryLocation.String
+    )
+  else
+    cancelPairingAttempt()
+    Controls.PairWithID.Boolean = false
+    RefreshTimer:Stop()
+    for i = 1, #Controls.ID do
+      Controls.ID[i].IsDisabled = false
+    end
+  end
+  buildOneShotDirections()
+  updateOneShotPairWithIdState()
+end
+
+function advanceOneShot()
+  local pairedName = OneShotQueue[OneShotIndex]
+  table.insert(OneShotPaired, pairedName)
+  OneShotPairingMode(false)
+  local nextIdx = findNextOneShotIndex(OneShotIndex)
+  if nextIdx > 0 then
+    OneShotIndex = nextIdx
+    Controls.OneShotNextUp.String = OneShotQueue[OneShotIndex]
+    DisplayPrint("✓ Paired " .. pairedName .. " — next: " .. OneShotQueue[OneShotIndex])
+  else
+    Controls.OneShotNextUp.String = "All devices paired!"
+    OneShotIndex = 0
+    DisplayPrint("✓ Queue complete")
+  end
+  updateOneShotLists()
+  updateOneShotPairWithIdState()
+  buildOneShotDirections()
+end
+
+function rebuildOneShotQueue()
+  OneShotPairingMode(false)
+  local location = Controls.InventoryLocation.String
+  local model = Controls.InventoryModel.String
+  OneShotLocation = location
+  OneShotModel = model
+  OneShotPaired = {}
+  OneShotQueue = buildOneShotQueue(location, model)
+  if #OneShotQueue > 0 then
+    OneShotIndex = 1
+    Controls.OneShotNextUp.String = OneShotQueue[1]
+  else
+    OneShotIndex = 0
+    if location ~= "" and model ~= "" then
+      Controls.OneShotNextUp.String = "No devices for this location/model"
+    else
+      Controls.OneShotNextUp.String = "Select location and model"
+    end
+  end
+  updateOneShotLists()
+  updateOneShotPairWithIdState()
+  buildOneShotDirections()
+end
+
+function handleInventoryLocation()
+  local location = Controls.InventoryLocation.String
+  if location ~= "" then
+    Controls.InventoryName.IsDisabled = true
+    Controls.InventoryName.String = ""
+    Controls.InventoryModel.Choices = Inventory.ModelsByLocation[location] or { "" }
+    if Controls.InventoryModel.String ~= "" then
+      local found = false
+      for _, m in ipairs(Controls.InventoryModel.Choices) do
+        if m == Controls.InventoryModel.String then
+          found = true
+          break
+        end
+      end
+      if not found then
+        Controls.InventoryModel.String = ""
+      end
+    end
+  else
+    Controls.InventoryName.IsDisabled = false
+    Controls.InventoryModel.Choices = Inventory.Models
+  end
+  rebuildOneShotQueue()
+end
+
 -- **Toggle pairing mode for ID-based assignment**
 
 function hidePairIdWarning ()
@@ -741,6 +1257,7 @@ function PairingMode(b)
   Controls.PairWithID.Boolean = b
   if b then
     hidePairIdWarning ()
+    startPairingAttempt("", "", "")
     
     Controls.InventoryName.String = ""
     Controls.InventoryModel.String = ""
@@ -776,6 +1293,7 @@ function PairingMode(b)
     peripheralcheckID = false
     buildDirectionsString()
   else
+    cancelPairingAttempt()
     for i = 1, #Controls.ID do
       Controls.ID[i].IsDisabled = false
     end
@@ -840,6 +1358,7 @@ Controls.InventoryName.EventHandler = function()
   if Controls.PairWithID.Boolean then
     Controls.AssignToDevice.Choices = { "" }
     local model = string.upper(Inventory.NameToModel[name])
+    updatePairingAttemptContext(name, Inventory.NameToModel[name] or Controls.InventoryModel.String, Controls.InventoryLocation.String)
     listenForIDMode(model)
     print("listenForIDMode called from inventoryname")
   end
@@ -852,18 +1371,26 @@ Controls.InventoryModel.EventHandler = function()
   else modelcheckID = false 
   end 
   checkForReset ()
+  if Controls.InventoryLocation.String ~= "" then
+    rebuildOneShotQueue()
+    return
+  end
   if Controls.PairWithID.Boolean then
     Controls.InventoryName.String = ""
     Controls.AssignToDevice.String = ""
     Controls.AssignToDevice.Choices = { "" }
-    -- local model = Controls.InventoryModel.String
-    -- if model ~= "" then
-    --   listenForIDMode(string.upper(model))
-    --   print("listenForIDMode called from inventorymodel")
-    -- end
+    updatePairingAttemptContext("", Controls.InventoryModel.String, "")
   end
   handleInventoryModel()
   buildDirectionsString()
+end
+
+Controls.InventoryLocation.EventHandler = function()
+  handleInventoryLocation()
+end
+
+Controls.OneShotToBePaired.EventHandler = function()
+  selectOneShotTarget(Controls.OneShotToBePaired.String)
 end
 
 Controls.Device.EventHandler = function()
@@ -991,8 +1518,20 @@ Controls.ResetName.EventHandler = function ()
 end 
 
 Controls.PairWithID.EventHandler = function ()
-  PairingMode(Controls.PairWithID.Boolean)
+  if Controls.InventoryLocation.String ~= "" then
+    if Controls.PairWithID.Boolean then
+      OneShotPairingMode(true)
+    else
+      OneShotPairingMode(false)
+    end
+  else
+    PairingMode(Controls.PairWithID.Boolean)
+  end
 end 
+
+Controls.LeaderboardResetStats.EventHandler = function()
+  resetPairingAnalytics()
+end
 
 Controls.PairWithIdDontShowAdgain.EventHandler = hidePairIdWarning
 
@@ -1032,7 +1571,9 @@ function buildDirectionsString()
     directions1 = directions1 .. "\n" .. step4
     Controls.Assign.Legend = "Assign\nPeripheral"
   end
-  Controls.PairWithIdDirections[1].String = directions1
+  if Controls.InventoryLocation.String == "" then
+    Controls.PairWithIdDirections[1].String = directions1
+  end
 
   -- Second directions string (for PairWithIdDirections[2])
   local header2 = "--Caution! Pairing with ID is not supported on all devices.   \n--Make sure that only you perform this operation. \n--Be careful not to pair with a device outside \n of the devices meant for this system. \n\n"
@@ -1051,9 +1592,15 @@ function buildDirectionsString()
   end
   
   Controls.PairWithIdDirections[2].String = directions2
+  buildOneShotDirections()
 end
 
 -- Initial device discovery
 getDevices()
 PairingMode(false)
+Controls.OneShotNextUp.String = "Select location and model"
+updateOneShotLists()
+updateOneShotPairWithIdState()
 buildDirectionsString()
+buildOneShotDirections()
+refreshLeaderboardDisplay()
