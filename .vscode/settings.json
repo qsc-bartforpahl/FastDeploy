@@ -1,0 +1,10 @@
+{
+  "editor.renderControlCharacters": true,
+  "files.associations": {
+    "*.json": "jsonc",
+    "*.qplug": "lua"
+  },
+  "files.autoSave": "off",
+  "files.autoSaveDelay": 500,
+  "editor.tabSize": 2
+}
