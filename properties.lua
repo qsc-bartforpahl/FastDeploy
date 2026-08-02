@@ -9,7 +9,7 @@ table.insert(props, {
   Name = "Device Count",
   Type = "integer",
   Min = 1,
-  Max = 100,
+  Max = 1000,
   Value = 50
 })
 
