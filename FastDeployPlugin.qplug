@@ -5,8 +5,8 @@
 -- Information block for the plugin
 PluginInfo = {
   Name = "Fast Deploy",
-  Version = "1.0.0",
-  BuildVersion = "2.1.0.2",
+  Version = "1.5.0",
+  BuildVersion = "2.2.0.0",
   Id = "fd8e3b7a-cb15-4fc9-a49d-8b84cff615c8",
   Author = "Bartholomew Forpahl",
   Description = "A plugin for fast deployment of Q-SYS peripherals"  
@@ -1761,24 +1761,70 @@ if Controls then
   end
   
   -- **Configure a peripheral to use DHCP**
-  function setPeripheralToDHCP(name)
-    local payload = string.format([[<network_configuration>
+  function uploadPeripheralNetworkSettings(originalIP, hostname, mode, ip, netmask, defaultRoute, handler)
+    local apiUrl = "https://" .. originalIP .. "/api/v1/network/settings"
+    HttpClient.Download({
+      Url = apiUrl,
+      Timeout = 30,
+      Headers = {},
+      EventHandler = function(_, code, data)
+        local url, payload, contentType
+        if code == 404 or code == 405 then
+          url = "https://" .. originalIP .. "/cgi-bin/network_configuration_xml"
+          contentType = "text/xml"
+          payload = string.format([[<network_configuration>
       <hostname>%s</hostname>
       <enable_dns/>
       <primary_dns/>
       <secondary_dns/>
-      <interface><name>LAN A</name><mode>auto</mode><address/><netmask/><default_route/></interface>
-      </network_configuration>]], Peripherals[name].hostname or name)
-    HttpClient.Upload({
-      Url = "https://" .. Peripherals[name].ip .. "/cgi-bin/network_configuration_xml",
-      Data = payload,
-      Method = "POST",
-      Timeout = 30,
-      Headers = { ["Content-Type"] = "text/xml" },
-      EventHandler = function(_, code, data)
-        DisplayPrint("Set DHCP for " .. name .. ": " .. (code == 200 and "Success" or "Failed: " .. data))
+      <interface><name>LAN A</name><mode>%s</mode><address>%s</address><netmask>%s</netmask><default_route>%s</default_route></interface>
+    </network_configuration>]], hostname, mode, ip, netmask, defaultRoute)
+        elseif code == 200 then
+          local decoded, settings = pcall(rapidjson.decode, data)
+          if not decoded or type(settings) ~= "table" or type(settings.interfaces) ~= "table" then
+            handler(nil, 0, "Invalid peripheral network settings response")
+            return
+          end
+          local lanA
+          for _, interface in ipairs(settings.interfaces) do
+            if interface.name == "LAN A" then
+              lanA = interface
+              break
+            end
+          end
+          if not lanA then
+            handler(nil, 0, "Peripheral network settings do not include LAN A")
+            return
+          end
+          settings.hostname = hostname
+          lanA.mode, lanA.address, lanA.netmask, lanA.gateway = mode, ip, netmask, defaultRoute
+          local encoded, result = pcall(rapidjson.encode, settings)
+          if not encoded then
+            handler(nil, 0, "Could not encode peripheral network settings")
+            return
+          end
+          url, payload, contentType = apiUrl, result, "application/json"
+        else
+          handler(nil, code, "Could not read peripheral network settings: " .. tostring(data or code))
+          return
+        end
+        DebugNetworkRequest(url, "POST", payload)
+        HttpClient.Upload({
+          Url = url,
+          Data = payload,
+          Method = "POST",
+          Timeout = 30,
+          Headers = { ["Content-Type"] = contentType },
+          EventHandler = handler
+        })
       end
     })
+  end
+  
+  function setPeripheralToDHCP(name)
+    uploadPeripheralNetworkSettings(Peripherals[name].ip, Peripherals[name].hostname or name, "auto", "", "", "", function(_, code, data)
+      DisplayPrint("Set DHCP for " .. name .. ": " .. (code == 200 and "Success" or "Failed: " .. tostring(data)))
+    end)
   end
   
   -- **Configure a peripheral witha new or old name and static IP or DHCP**
@@ -1791,25 +1837,9 @@ if Controls then
     end
     local originalIP = DevicesAndIPs[oldName]
     local model = DeviceTypeLookup[oldName]
-    local payload = string.format([[<network_configuration>
-      <hostname>%s</hostname>
-      <enable_dns/>
-      <primary_dns/>
-      <secondary_dns/>
-      <interface><name>LAN A</name><mode>%s</mode><address>%s</address><netmask>%s</netmask><default_route>%s</default_route></interface>
-    </network_configuration>]], newName, mode, ip, netmask, defaultRoute)
-    
     DebugPrint("Sending configuration to " .. oldName .. " at " .. originalIP, "tx")
-    DebugNetworkRequest("https://" .. originalIP .. "/cgi-bin/network_configuration_xml", "POST", payload)
-    
-    HttpClient.Upload({
-      Url = "https://" .. originalIP .. "/cgi-bin/network_configuration_xml",
-      Data = payload,
-      Method = "POST",
-      Timeout = 30,
-      Headers = { ["Content-Type"] = "text/xml" },
-      EventHandler = function(_, code, data)
-        DebugNetworkResponse("https://" .. originalIP .. "/cgi-bin/network_configuration_xml", code, data)
+    uploadPeripheralNetworkSettings(originalIP, newName, mode, ip, netmask, defaultRoute, function(_, code, data)
+        DebugNetworkResponse("https://" .. originalIP, code, data)
         if code == 200 then
           DebugPrint("Successfully configured " .. newName, "rx")
           if mode == "static" then
@@ -1828,8 +1858,8 @@ if Controls then
           DebugPrint("Setting assign to device choices to empty", "function")
           Controls.AssignToDevice.Choices = {}
         else
-          DebugPrint("Failed to configure " .. newName .. ": " .. data, "rx")
-          DisplayPrint("\nFailed to set static for " .. newName .. ": " .. data)
+          DebugPrint("Failed to configure " .. newName .. ": " .. tostring(data), "rx")
+          DisplayPrint("\nFailed to configure " .. newName .. ": " .. tostring(data))
         end
         if Controls.PairWithID.Boolean then
           PairingMode()
@@ -1837,8 +1867,7 @@ if Controls then
           PairingMode()
         end
         Controls.AssignToDevice.String = ""
-      end
-    })
+      end)
     DebugFunctionExit("setPeripheral")
   end
   
