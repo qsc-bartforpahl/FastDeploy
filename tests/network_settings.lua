@@ -1,7 +1,11 @@
 local download, upload, encodedSettings
+local uploads = {}
 HttpClient = {
   Download = function(request) download = request end,
-  Upload = function(request) upload = request end
+  Upload = function(request)
+    upload = request
+    uploads[#uploads + 1] = request
+  end
 }
 DebugNetworkRequest = function() end
 rapidjson = {
@@ -16,7 +20,7 @@ rapidjson = {
 }
 
 local function beginRequest(mode, ip, netmask, gateway)
-  download, upload, encodedSettings = nil, nil, nil
+  download, upload, encodedSettings, uploads = nil, nil, nil, {}
   local result = {}
   uploadPeripheralNetworkSettings("10.0.0.2", "new-name", mode, ip, netmask, gateway,
     function(_, code, data) result.code, result.data = code, data end)
@@ -49,6 +53,20 @@ download.EventHandler(nil, 404, "not found")
 assert(upload.Url == "https://10.0.0.2/cgi-bin/network_configuration_xml")
 assert(upload.Headers["Content-Type"] == "text/xml")
 assert(upload.Data:find("<hostname>new%-name</hostname>") and upload.Data:find("<mode>auto</mode>"))
+
+result = beginRequest("auto", "", "", "")
+download.EventHandler(nil, 200, {hostname = "old-name", interfaces = {{name = "LAN A"}}})
+assert(upload.Url == "https://10.0.0.2/api/v1/network/settings")
+upload.EventHandler(nil, 400, "{}")
+assert(upload.Url == "https://10.0.0.2/cgi-bin/network_configuration_xml")
+assert(#uploads == 2)
+assert(uploads[2].Headers["Content-Type"] == "text/xml")
+uploads[2].EventHandler(nil, 200, "ok")
+assert(result.code == 200)
+
+result = beginRequest("auto", "", "", "")
+download.EventHandler(nil, 400, '{"message":"invalid settings"}')
+assert(not upload and result.code == 400)
 
 result = beginRequest("auto", "", "", "")
 download.EventHandler(nil, 401, "Unauthorized")

@@ -420,22 +420,42 @@ end
 -- **Configure a peripheral to use DHCP**
 function uploadPeripheralNetworkSettings(originalIP, hostname, mode, ip, netmask, defaultRoute, handler)
   local apiUrl = "https://" .. originalIP .. "/api/v1/network/settings"
-  HttpClient.Download({
-    Url = apiUrl,
-    Timeout = 30,
-    Headers = {},
-    EventHandler = function(_, code, data)
-      local url, payload, contentType
-      if code == 404 or code == 405 then
-        url = "https://" .. originalIP .. "/cgi-bin/network_configuration_xml"
-        contentType = "text/xml"
-        payload = string.format([[<network_configuration>
+  local legacyUrl = "https://" .. originalIP .. "/cgi-bin/network_configuration_xml"
+  local function isEmptyBadRequest(code, data)
+    return code == 400 and (
+      data == nil
+      or data == ""
+      or (type(data) == "string" and data:match("^%s*{}%s*$") ~= nil)
+      or (type(data) == "table" and next(data) == nil)
+    )
+  end
+  local function uploadLegacyNetworkSettings()
+    local payload = string.format([[<network_configuration>
     <hostname>%s</hostname>
     <enable_dns/>
     <primary_dns/>
     <secondary_dns/>
     <interface><name>LAN A</name><mode>%s</mode><address>%s</address><netmask>%s</netmask><default_route>%s</default_route></interface>
   </network_configuration>]], hostname, mode, ip, netmask, defaultRoute)
+    DebugNetworkRequest(legacyUrl, "POST", payload)
+    HttpClient.Upload({
+      Url = legacyUrl,
+      Data = payload,
+      Method = "POST",
+      Timeout = 30,
+      Headers = { ["Content-Type"] = "text/xml" },
+      EventHandler = handler
+    })
+  end
+  HttpClient.Download({
+    Url = apiUrl,
+    Timeout = 30,
+    Headers = {},
+    EventHandler = function(_, code, data)
+      local url, payload, contentType
+      if code == 404 or code == 405 or isEmptyBadRequest(code, data) then
+        uploadLegacyNetworkSettings()
+        return
       elseif code == 200 then
         local decoded, settings = pcall(rapidjson.decode, data)
         if not decoded or type(settings) ~= "table" or type(settings.interfaces) ~= "table" then
@@ -472,7 +492,13 @@ function uploadPeripheralNetworkSettings(originalIP, hostname, mode, ip, netmask
         Method = "POST",
         Timeout = 30,
         Headers = { ["Content-Type"] = contentType },
-        EventHandler = handler
+        EventHandler = function(headers, uploadCode, uploadData)
+          if url == apiUrl and isEmptyBadRequest(uploadCode, uploadData) then
+            uploadLegacyNetworkSettings()
+          else
+            handler(headers, uploadCode, uploadData)
+          end
+        end
       })
     end
   })
@@ -485,7 +511,7 @@ function setPeripheralToDHCP(name)
 end
 
 -- **Configure a peripheral witha new or old name and static IP or DHCP**
-function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode)
+function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode, onSuccess)
   DebugFunctionEntry("setPeripheral", oldName, newName, ip, netmask, defaultRoute, mode)
   DebugPrint("Setting peripheral " .. oldName .. " to " .. newName .. " with mode " .. mode, "function")
   
@@ -514,6 +540,7 @@ function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode)
         Controls.InventoryName.String = ""
         DebugPrint("Setting assign to device choices to empty", "function")
         Controls.AssignToDevice.Choices = {}
+        if onSuccess then onSuccess() end
       else
         DebugPrint("Failed to configure " .. newName .. ": " .. tostring(data), "rx")
         DisplayPrint("\nFailed to configure " .. newName .. ": " .. tostring(data))
@@ -534,7 +561,6 @@ end
 -- **Reset a device's name to a default format (model-MAC last 4)**
 function resetName(model, name, ip)
 
-  name = string.lower(name)
   local i = DevicesLookup[name] or 1
   model = model or Controls.DeviceModel[i].String
   if model == "I/O-USB-Bridge" then
@@ -550,12 +576,12 @@ function resetName(model, name, ip)
   end
   local lastFour = mac:sub(-4)
   local newName = model .. "-" .. lastFour
-  setPeripheral(name, newName, ip, netMask, Controls.NewGateway.String, mode)
-  DisplayPrint("✓ Success\t\t Reset name for " .. name .. " to: " .. newName)
-  refresh = true 
-  refreshname = newName
-  Timer.CallAfter(getDevices, 30)
-  Controls.AssignToDevice.Choices = {}
+  setPeripheral(name, newName, ip, netMask, Controls.NewGateway.String, mode, function()
+    DisplayPrint("✓ Success\t\t Reset name for " .. name .. " to: " .. newName)
+    refresh = true
+    refreshname = newName
+    Timer.CallAfter(getDevices, 30)
+  end)
 end
 
 -- **Calculate IP range from gateway and netmask**
