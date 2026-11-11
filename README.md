@@ -1,6 +1,6 @@
 # Fast Deploy Plugin
 
-Version: 1.0.0  
+Version: 1.5.1  
 Author: Bartholomew Forpahl
 
 ## Description
@@ -42,6 +42,25 @@ For devices that support ID mode:
 2. Select an inventory model and name
 3. Press the ID button on the physical device you want to pair
 4. The system will automatically associate the pressed device with the selected inventory item
+
+Enable **Keep Pair by ID Enabled** before pairing to pair several devices in succession.
+After each successful pairing, Pair With ID remains enabled and the inventory model
+and name remain selected. The plugin sends ID-off to discovered devices of that
+model and waits for those commands to succeed before listening again. Choose the
+next Inventory Name, then press ID on the next physical device. Devices of other
+models are not sent ID-off during this step. The Inventory Name field turns green
+after a successful pairing; changing the name or model clears the color until the next
+successful pairing. If an ID-off command fails, the plugin
+reports the error and pauses listening; resolve the error and select the name again
+to retry pairing. Leave the option off for the existing one-pair-at-a-time behavior.
+
+## Tests
+
+Run `lua tests/run.lua` from the repository root. The tests mock the Q-SYS runtime
+and HTTP callbacks to cover single and repeated ID pairing, selection changes,
+ID-off failures, and network-settings compatibility. They do not contact devices.
+Use `lua tests/run.lua FastDeployPlugin.qplug` to test the compiled plugin instead
+of the runtime source.
 
 ## Requirements
 

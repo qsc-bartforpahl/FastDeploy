@@ -32,6 +32,8 @@ Inventory = {
 LastStatusCodes = {}        -- Tracks last known status codes for inventory items
 inventoryTimer = Timer.New() -- Timer for periodic inventory updates
 RefreshTimer = Timer.New()
+local idPairingGeneration = 0
+local idPairingBusy = false
 -- Network globals
 broadcastRange = ""         -- Broadcast address for the network
 netMask = ""          -- Subnet mask for the network
@@ -42,6 +44,8 @@ DebugSetting = Properties["Debug Print"].Value
 -- Set design name on startup
 Controls.LocalDesignName.String = Design.GetStatus().DesignName
 Controls.AssignToDevice.String = ""
+Controls.InventoryModel.Color = ""
+Controls.InventoryName.Color = ""
 -- Initialize device controls to a cleared state
 refresh = false
 for i = 1, #Controls.DeviceModel do
@@ -520,11 +524,21 @@ function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode, onSucc
   end
   local originalIP = DevicesAndIPs[oldName]
   local model = DeviceTypeLookup[oldName]
+  local pairingByID = Controls.PairWithID.Boolean
+  local pairingGeneration = idPairingGeneration
+  local inventoryModel = Controls.InventoryModel.String
+  local inventoryName = Controls.InventoryName.String
   DebugPrint("Sending configuration to " .. oldName .. " at " .. originalIP, "tx")
   uploadPeripheralNetworkSettings(originalIP, newName, mode, ip, netmask, defaultRoute, function(_, code, data)
       DebugNetworkResponse("https://" .. originalIP, code, data)
       if code == 200 then
         DebugPrint("Successfully configured " .. newName, "rx")
+        if inventoryModel ~= "" and inventoryName == newName
+          and Controls.InventoryModel.String == inventoryModel
+          and Controls.InventoryName.String == inventoryName
+          and pairingGeneration == idPairingGeneration then
+          Controls.InventoryName.Color = "green"
+        end
         if mode == "static" then
           DisplayPrint("✓ Success \t\t Inventory Name:    " .. newName .. " \n\t\t\t Model: " .. model .. " \t Static IP: " .. ip)
           Controls.Assign.Legend = newName .. " \n✓ Success \n"..ip
@@ -534,10 +548,30 @@ function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode, onSucc
           Controls.Assign.Legend = newName .. " \n✓ Success \n DHCP"
           Timer.CallAfter(function()buildDirectionsString() Controls.Assign.IsDisabled = true end,5) 
         end 
-        Peripherals[newName] = { ip = ip }
-        
-        if oldName ~= newName then Peripherals[oldName] = nil end
-        Controls.InventoryName.String = ""
+        local peripheral = Peripherals[oldName] or {}
+        peripheral.ip = mode == "auto" and originalIP or ip
+        peripheral.hostname = newName
+        Peripherals[newName] = peripheral
+        DevicesAndIPs[newName] = peripheral.ip
+        DeviceTypeLookup[newName] = model
+        local index = DevicesLookup[oldName]
+        if index then
+          Devices[index] = newName
+          DevicesLookup[newName] = index
+          Controls.DeviceName[index].String = newName
+          Controls.DeviceIP[index].String = peripheral.ip
+        end
+        for _, names in pairs(tabModeltoName) do
+          for i, name in ipairs(names) do
+            if name == oldName then names[i] = newName end
+          end
+        end
+        if oldName ~= newName then
+          Peripherals[oldName], DevicesAndIPs[oldName], DeviceTypeLookup[oldName], DevicesLookup[oldName] = nil, nil, nil, nil
+        end
+        if Controls.InventoryName.String == newName and not (pairingByID and Controls.KeepPairWithID.Boolean) then
+          Controls.InventoryName.String = ""
+        end
         DebugPrint("Setting assign to device choices to empty", "function")
         Controls.AssignToDevice.Choices = {}
         if onSuccess then onSuccess() end
@@ -545,10 +579,15 @@ function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode, onSucc
         DebugPrint("Failed to configure " .. newName .. ": " .. tostring(data), "rx")
         DisplayPrint("\nFailed to configure " .. newName .. ": " .. tostring(data))
       end
-      if Controls.PairWithID.Boolean then
-        PairingMode()
-        Controls.PairWithID.Boolean = false
-        PairingMode()
+      if pairingByID and pairingGeneration == idPairingGeneration then
+        idPairingBusy = false
+        if Controls.PairWithID.Boolean then
+          if Controls.KeepPairWithID.Boolean then
+            if code == 200 then clearIDModeForModel(model) end
+          else
+            PairingMode(false)
+          end
+        end
       end
       Controls.AssignToDevice.String = ""
     end)
@@ -735,13 +774,64 @@ function idMode(bool)
     return bool and "on" or "off"
 end
 
+function stopIDModeListener()
+  idPairingGeneration = idPairingGeneration + 1
+  RefreshTimer:Stop()
+end
+
+function clearIDModeForModel(model)
+  stopIDModeListener()
+  local generation = idPairingGeneration
+  local targets = {}
+  for name, deviceModel in pairs(DeviceTypeLookup) do
+    if string.upper(deviceModel) == string.upper(model) and DevicesAndIPs[name] then
+      targets[#targets + 1] = { name = name, ip = DevicesAndIPs[name] }
+    end
+  end
+  local pending, failed = #targets, false
+  idPairingBusy = pending > 0
+  local function finish()
+    idPairingBusy = false
+    if not failed and Controls.PairWithID.Boolean then
+      local selectedModel = Inventory.NameToModel[Controls.InventoryName.String]
+      if selectedModel then listenForIDMode(string.upper(selectedModel)) end
+    end
+  end
+  if pending == 0 then
+    finish()
+    return
+  end
+  for _, target in ipairs(targets) do
+    HttpClient.Download({
+      Url = "https://" .. target.ip .. "/cgi-bin/id_mode?mode=off",
+      Timeout = 30,
+      Headers = {},
+      EventHandler = function(_, code, data)
+        if generation ~= idPairingGeneration then return end
+        if code ~= 200 then
+          failed = true
+          DisplayPrint("Failed to turn off ID mode for " .. target.name .. ": HTTP " .. tostring(code) .. " " .. tostring(data))
+        end
+        pending = pending - 1
+        if pending == 0 then finish() end
+      end
+    })
+  end
+end
+
 -- **Listen for ID mode on devices of a specific model**
 -- Used in pairing mode to detect when a device's ID is activated
 function listenForIDMode(model)
+  if idPairingBusy then return end
+  stopIDModeListener()
+  if not Controls.PairWithID.Boolean or Controls.InventoryName.String == "" then return end
+  local generation = idPairingGeneration
+  local inventoryName = Controls.InventoryName.String
   DebugPrint("Starting ID mode listener for model: " .. model, "function")
   RefreshTimer.EventHandler = function()
+    if generation ~= idPairingGeneration or idPairingBusy or not Controls.PairWithID.Boolean then return end
     for _, name in pairs(tabModeltoName[model] or {}) do
-      if name ~= "" then
+      if name ~= "" and DevicesAndIPs[name] then
         local ip = DevicesAndIPs[name]
         DebugPrint("Checking ID mode for device: " .. name, "tx")
         HttpClient.Download({
@@ -749,13 +839,16 @@ function listenForIDMode(model)
           Timeout = 30,
           Headers = {},
           EventHandler = function(_, code, data)
+            if generation ~= idPairingGeneration or idPairingBusy
+              or not Controls.PairWithID.Boolean or Controls.InventoryName.String ~= inventoryName then return end
             if code == 200 then
-              local device = string.lower(data:match("<device_name%s*>(.-)</device_name>") or "N/A")
+              local device = name
               local id = data:match("<id_mode>(.-)</id_mode>") or "N/A"
               if id == "on" then
                 DebugPrint("ID mode detected on device: " .. device, "rx")
+                stopIDModeListener()
+                idPairingBusy = true
                 applyAssign(device)
-                RefreshTimer:Stop()
                 DebugPrint("Turning off ID mode for device: " .. device, "tx")
                 HttpClient.Download({
                   Url = "https://" .. ip .. "/cgi-bin/id_mode?mode=off",
@@ -793,12 +886,15 @@ end
 -- When enabled, listens for ID activation on devices matching the selected model
 function PairingMode(b)
 
+  stopIDModeListener()
+  idPairingBusy = false
   Controls.PairWithID.Boolean = b
   if b then
     hidePairIdWarning ()
     
     Controls.InventoryName.String = ""
     Controls.InventoryModel.String = ""
+    Controls.InventoryName.Color = ""
     Controls.AssignToDevice.String = ""
     Controls.AssignToDevice.IsDisabled = true
     Controls.Assign.IsInvisible = true
@@ -878,6 +974,7 @@ end
 -- **Event Handlers**
 
 Controls.InventoryName.EventHandler = function()
+  Controls.InventoryName.Color = ""
   if Controls.InventoryName.String ~= "" then 
     namecheckID = true 
   else namecheckID = false 
@@ -892,16 +989,20 @@ Controls.InventoryName.EventHandler = function()
     local model = string.upper(Inventory.NameToModel[name])
     Controls.AssignToDevice.Choices = tabModeltoName[model] or { "" }
   end
-  if Controls.PairWithID.Boolean then
+  if Controls.PairWithID.Boolean and name ~= "" then
     Controls.AssignToDevice.Choices = { "" }
     local model = string.upper(Inventory.NameToModel[name])
     listenForIDMode(model)
     print("listenForIDMode called from inventoryname")
+  elseif Controls.PairWithID.Boolean and not idPairingBusy then
+    stopIDModeListener()
   end
   buildDirectionsString()
 end
 
 Controls.InventoryModel.EventHandler = function()
+  Controls.InventoryName.Color = ""
+  if not idPairingBusy then stopIDModeListener() end
   if Controls.InventoryModel.String ~= "" then 
     modelcheckID = true 
   else modelcheckID = false 

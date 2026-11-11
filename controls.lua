@@ -231,6 +231,15 @@ table.insert(ctrls, {
   Count = 1
 })
 
+table.insert(ctrls, {
+  Name = "KeepPairWithID",
+  ControlType = "Button",
+  ButtonType = "Toggle",
+  UserPin = true,
+  PinStyle = "Input",
+  Count = 1
+})
+
 table.insert(ctrls, { 
   Name = "PairWithIdDontShowAdgain", 
   ControlType = "Button", 
@@ -343,6 +352,5 @@ table.insert(ctrls, {
   PinStyle = "Input",
   Count = 1
 })  
-
 
 

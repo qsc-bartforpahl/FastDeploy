@@ -99,6 +99,15 @@ if CurrentPage == "Main UI" then
     Legend = "Pair\nWith\nID\nButton"
   }
 
+  layout["KeepPairWithID"] = {
+    PrettyName = "Action~Keep Pair With ID",
+    Style = "Button",
+    Position = {46,298},
+    Size = {68,50},
+    Color = {0,128,255},
+    Legend = "Keep\nPair by ID\nEnabled"
+  }
+
   table.insert(graphics, {
     Type = "Text",
     Text = "Press and Follow\nDirections to the\nRight —>",
