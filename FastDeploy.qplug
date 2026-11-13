@@ -1,0 +1,2476 @@
+-- Basic Framework Plugin
+-- by QSC
+-- October 2020
+
+-- Information block for the plugin
+PluginInfo = {
+  Name = "Fast Deploy",
+  Version = "1.5.3",
+  BuildVersion = "2.2.1.8",
+  Id = "fd8e3b7a-cb15-4fc9-a49d-8b84cff615c8",
+  Author = "Bartholomew Forpahl",
+  Description = "A plugin for fast deployment of Q-SYS peripherals"  
+}
+
+-- Define the color of the plugin object in the design
+function GetColor(props)
+  return { 102, 102, 204 }
+end
+
+-- The name that will initially display when dragged into a design
+function GetPrettyName(props)
+  return "Fast Deploy\n v-" .. PluginInfo.Version.."-"..PluginInfo.BuildVersion
+end
+
+-- Optional function used if plugin has multiple pages
+PageNames = { "Main UI", "Network Device List", "Extra Stuff" }  --List the pages within the plugin
+function GetPages(props)
+  local pages = {}
+  for ix,name in ipairs(PageNames) do
+    table.insert(pages, {name = PageNames[ix]})
+  end
+  return pages
+end
+
+-- Optional function to define model if plugin supports more than one model
+function GetModel(props)
+  local model = {}
+  if props.Model ~= nil and props.Model.Value ~= "" then
+    table.insert(model, { props.Model.Value } )
+  else
+    table.insert(model, { "Fast Deploy" } )
+  end
+ return model
+end
+
+-- Define User configurable Properties of the plugin
+function GetProperties()
+  local props = {}
+  table.insert(props, {
+    Name = "Debug Print",
+    Type = "enum",
+    Choices = {"None", "Tx/Rx", "Tx", "Rx", "Function Calls", "All"},
+    Value = "None"
+  })
+  
+  table.insert(props, {
+    Name = "Device Count",
+    Type = "integer",
+    Min = 1,
+    Max = 150,
+    Value = 50
+  })
+  return props
+end
+
+-- Optional function to define pins on the plugin that are not connected to a Control
+function GetPins(props)
+  local pins = {}
+  -- No additional pins needed for this plugin
+  return pins
+end
+
+-- Optional function to update available properties when properties are altered by the user
+function RectifyProperties(props)
+  if props.plugin_show_debug.Value == false then 
+    props["Debug Print"].IsHidden = true 
+  end
+  
+  return props
+end
+
+-- Optional function to define components used within the plugin
+function GetComponents(props)
+  local components = {}
+  -- No additional components needed for this plugin
+  return components
+end
+
+-- Optional function to define wiring of components used within the plugin
+function GetWiring(props)
+  local wiring = {}
+  -- No wiring needed for this plugin
+  return wiring
+end
+
+-- Defines the Controls used within the plugin
+function GetControls(props)
+  local ctrls = {}
+  table.insert(ctrls,{
+    Name = "code",
+    ControlType = "Text",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  -- Base controls
+  table.insert(ctrls, {
+    Name = "SendButton",
+    ControlType = "Button",
+    ButtonType = "Momentary",
+    Count = 1,
+    UserPin = true,
+    PinStyle = "Input",
+    Icon = "Power"
+  })
+  
+  -- Network Configuration
+  table.insert(ctrls, { 
+    Name = "LocalDesignName", 
+    ControlType = "Text", 
+    UserPin = true, 
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "NewNetworkPrefix", 
+    ControlType = "Text", 
+    UserPin = true, 
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "NewNetmask", 
+    ControlType = "Text", 
+    UserPin = true, 
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "NewGateway", 
+    ControlType = "Text", 
+    UserPin = true, 
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "NewIPRange", 
+    ControlType = "Text", 
+    UserPin = true, 
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "CurrentLanAConfig", 
+    ControlType = "Text",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "CurrentLanBConfig", 
+    ControlType = "Text",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "IPMode", 
+    ControlType = "Button", 
+    ButtonType = "Toggle", 
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "BaseOctets", 
+    ControlType = "Text", 
+    Constraint = "List",
+    Count = 2
+  })
+  
+  table.insert(ctrls, { 
+    Name = "ThirdOctet", 
+    ControlType = "Text", 
+    Constraint = "List",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "LastOctet", 
+    ControlType = "Text", 
+    Constraint = "List",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  -- Inventory Selection
+  table.insert(ctrls, {
+    Name = "InventoryLocation",
+    ControlType = "Text",
+    Constraint = "List",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "InventoryModel", 
+    ControlType = "Text", 
+    Constraint = "List", 
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "InventoryName", 
+    ControlType = "Text", 
+    Constraint = "List", 
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, {
+    Name = "PrevDevice",
+    ControlType = "Button",
+    ButtonType = "Trigger",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, {
+    Name = "NextDevice",
+    ControlType = "Button",
+    ButtonType = "Trigger",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "AssignToDevice", 
+    ControlType = "Text", 
+    Constraint = "List", 
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  
+  
+  -- Device List (dynamic count based on properties)
+  local deviceCount = math.max(1, math.min(150, props["Device Count"].Value))
+  print("deviceCount: "..deviceCount)
+  table.insert(ctrls, {
+    Name = "DeviceModelFilter",
+    ControlType = "Text",
+    Constraint = "List",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, {
+    Name = "DeviceListSummary",
+    ControlType = "Text",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "DeviceModel", 
+    ControlType = "Text", 
+    Count = deviceCount,
+    UserPin = true,
+    PinStyle = "Input"
+  })
+  
+  table.insert(ctrls, { 
+    Name = "DeviceName", 
+    ControlType = "Text", 
+    Count = deviceCount,
+    UserPin = true,
+    PinStyle = "Input"
+  })
+  
+  table.insert(ctrls, { 
+    Name = "DeviceIP", 
+    ControlType = "Text", 
+    Count = deviceCount,
+    UserPin = true,
+    PinStyle = "Input"
+  })
+  
+  table.insert(ctrls, { 
+    Name = "DesignOnDevice", 
+    ControlType = "Text", 
+    Count = deviceCount,
+    UserPin = true,
+    PinStyle = "Input"
+  })
+  
+  table.insert(ctrls, { 
+    Name = "ID", 
+    ControlType = "Button", 
+    ButtonType = "Toggle", 
+    Count = deviceCount,
+    UserPin = true,
+    PinStyle = "Input"
+  })
+  
+  table.insert(ctrls, { 
+    Name = "IDPairing", 
+    ControlType = "Button", 
+    ButtonType = "Toggle", 
+    Count = deviceCount,
+    UserPin = true,
+    PinStyle = "Input"
+  })
+  
+  table.insert(ctrls, { 
+    Name = "PeripheralInfo", 
+    ControlType = "Text", 
+    Count = deviceCount,
+    UserPin = true,
+    PinStyle = "Input"
+  })
+  
+  -- Actions
+  table.insert(ctrls, { 
+    Name = "Get", 
+    ControlType = "Button", 
+    ButtonType = "Trigger",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "Assign", 
+    ControlType = "Button", 
+    ButtonType = "Trigger",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "ResetName", 
+    ControlType = "Button", 
+    ButtonType = "Trigger",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "PairWithID", 
+    ControlType = "Button", 
+    ButtonType = "Toggle",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, {
+    Name = "KeepPairWithID",
+    ControlType = "Button",
+    ButtonType = "Toggle",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "PairWithIdDontShowAdgain", 
+    ControlType = "Button", 
+    ButtonType = "Toggle",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "PairWithIdDirections", 
+    ControlType = "Text", 
+    Count = 2,
+    UserPin = true,
+    PinStyle = "Input"
+  })
+  
+  table.insert(ctrls, { 
+    Name = "Control_2", 
+    ControlType = "Button", 
+    ButtonType = "Toggle",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "PairingByNameDebug", 
+    ControlType = "Text", 
+    Count = 1,
+    UserPin = true,
+    PinStyle = "Input"
+  })
+  
+  -- Utilities
+  table.insert(ctrls, { 
+    Name = "Device", 
+    ControlType = "Text", 
+    Constraint = "Combo Box",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "IP", 
+    ControlType = "Text",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "Reboot", 
+    ControlType = "Button",
+    ButtonType = "Trigger",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "SetStatic", 
+    ControlType = "Button",
+    ButtonType = "Trigger",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "SetDHCP", 
+    ControlType = "Button",
+    ButtonType = "Trigger",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "DownloadLogfile", 
+    ControlType = "Button",
+    ButtonType = "Trigger",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "ScanIPs", 
+    ControlType = "Button",
+    ButtonType = "Trigger",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "StaticOrAuto", 
+    ControlType = "Text",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })
+  
+  table.insert(ctrls, { 
+    Name = "Dtype", 
+    ControlType = "Text",
+    UserPin = true,
+    PinStyle = "Input",
+    Count = 1
+  })  
+  return ctrls
+end
+
+--Layout of controls and graphics for the plugin UI to display
+function GetControlLayout(props)
+  local layout = {}
+  local graphics = {}
+  local CurrentPage = PageNames[props["page_index"].Value]
+  local deviceCount = props["Device Count"].Value
+  
+  local theme = {
+    background = {24, 31, 42},
+    panel = {35, 44, 57},
+    panelRaised = {43, 54, 69},
+    border = {63, 78, 96},
+    text = {232, 238, 245},
+    muted = {157, 172, 190},
+    accent = {0, 122, 204},
+    accentDark = {0, 91, 156},
+    green = {39, 143, 99},
+    warning = {192, 139, 55},
+    rowA = {38, 48, 62},
+    rowB = {44, 55, 70}
+  }
+  
+  local function addBackground()
+    table.insert(graphics, {
+      Type = "GroupBox",
+      Text = "",
+      Fill = theme.background,
+      StrokeWidth = 0,
+      Position = {0, 0},
+      Size = {795, 780}
+    })
+  end
+  
+  local function addPanel(text, x, y, width, height)
+    table.insert(graphics, {
+      Type = "GroupBox",
+      Text = text,
+      Fill = theme.panel,
+      StrokeWidth = 1,
+      StrokeColor = theme.border,
+      CornerRadius = 8,
+      Position = {x, y},
+      Size = {width, height},
+      FontSize = 11,
+      Color = theme.text,
+      HTextAlign = "Left"
+    })
+  end
+  
+  local function addLabel(text, x, y, width, height, fontSize, color, align)
+    table.insert(graphics, {
+      Type = "Text",
+      Text = text,
+      Position = {x, y},
+      Size = {width, height},
+      FontSize = fontSize or 11,
+      Color = color or theme.muted,
+      HTextAlign = align or "Left"
+    })
+  end
+  
+  local function addControl(name, prettyName, style, x, y, width, height, options)
+    local control = {
+      PrettyName = prettyName,
+      Style = style,
+      Position = {x, y},
+      Size = {width, height}
+    }
+    for key, value in pairs(options or {}) do
+      control[key] = value
+    end
+    layout[name] = control
+  end
+  
+  layout["code"] = {
+    PrettyName = "code",
+    Style = "None",
+    Position = {0, 0},
+    Size = {0, 0},
+    IsReadOnly = true,
+    Color = {0, 0, 0}
+  }
+  
+  if CurrentPage == "Main UI" then
+    addBackground()
+    addPanel("", 20, 16, 755, 70)
+    addLabel("FAST DEPLOY", 38, 27, 360, 28, 22, theme.text)
+    addLabel("PERIPHERAL PAIRING  /  DEVICE MANAGEMENT", 40, 56, 440, 16, 9, theme.muted)
+    addControl("Get", "Action~Refresh", "Button", 660, 32, 96, 36, {
+      Legend = "REFRESH",
+      Color = theme.accent
+    })
+  
+    addPanel("PAIR BY DEVICE ID", 20, 98, 755, 104)
+    addControl("PairWithID", "Action~Pair With ID", "Button", 40, 128, 112, 42, {
+      Color = theme.accent,
+      Legend = "Pair by ID"
+    })
+    addControl("KeepPairWithID", "Action~Keep Pair With ID", "Button", 165, 128, 118, 42, {
+      Color = theme.accentDark,
+      Legend = "Keep Pairing"
+    })
+    addControl("PairWithIdDirections 1", "Help~Directions", "Text", 302, 108, 448, 88, {
+      IsReadOnly = true,
+      Color = theme.text,
+      Fill = theme.panel,
+      FontSize = 11,
+      HTextAlign = "Left"
+    })
+    addControl("PairWithIdDirections 2", "Help~ID Warnings", "Text", 302, 109, 448, 77, {
+      IsReadOnly = true,
+      IsInvisible = true,
+      Color = theme.text,
+      Fill = theme.panel,
+      FontSize = 10,
+      HTextAlign = "Left"
+    })
+  
+    addPanel("INVENTORY", 20, 204, 430, 252)
+    addLabel("Choose the Designer target", 38, 226, 390, 16, 10, theme.muted)
+    addLabel("LOCATION", 38, 247, 386, 15, 9, theme.muted)
+    addControl("InventoryLocation", "Inventory~Location", "ComboBox", 38, 264, 394, 30, {
+      FontSize = 11
+    })
+    addLabel("MODEL", 38, 302, 172, 15, 9, theme.muted)
+    addControl("InventoryModel", "Inventory~Model", "ComboBox", 38, 319, 172, 30, {
+      FontSize = 11
+    })
+    addLabel("INVENTORY NAME", 232, 302, 200, 15, 9, theme.muted)
+    addControl("InventoryName", "Inventory~Name", "ComboBox", 232, 319, 200, 30, {
+      FontSize = 10
+    })
+    addControl("PrevDevice", "Inventory~Prev Device", "Button", 38, 365, 172, 36, {
+      Legend = "<  PREVIOUS"
+    })
+    addControl("NextDevice", "Inventory~Next Device", "Button", 232, 365, 200, 36, {
+      Legend = "NEXT DEVICE  >",
+      Color = theme.accent
+    })
+    addLabel("Use Next Device to step through sorted names.", 38, 416, 394, 18, 9, theme.muted)
+  
+    addPanel("NETWORK PERIPHERAL", 465, 204, 310, 252)
+    addLabel("Select the online device to pair", 483, 226, 274, 16, 10, theme.muted)
+    addLabel("DISCOVERED DEVICE", 483, 252, 274, 15, 9, theme.muted)
+    addControl("AssignToDevice", "Assign~To Device", "ComboBox", 483, 269, 274, 32, {
+      FontSize = 11
+    })
+    addLabel("The selected model filters this list.", 483, 315, 274, 16, 9, theme.muted)
+    addControl("Assign", "Action~Assign", "Button", 483, 347, 274, 54, {
+      Color = theme.green,
+      Legend = "ASSIGN PERIPHERAL"
+    })
+  
+    addPanel("IP ADDRESS", 20, 470, 755, 100)
+    addLabel("Address mode", 38, 494, 120, 16, 9, theme.muted)
+    addControl("IPMode", "Network~IP Mode", "Button", 38, 513, 112, 38, {
+      Color = theme.panelRaised,
+      Legend = "DHCP"
+    })
+    addLabel("PERIPHERAL ADDRESS", 178, 494, 300, 15, 9, theme.muted)
+    addControl("BaseOctets 1", "IP~First Octet", "Text", 178, 514, 48, 30, {
+      IsReadOnly = true,
+      Color = theme.panelRaised,
+      FontSize = 11
+    })
+    addLabel(".", 228, 518, 8, 20, 12, theme.muted)
+    addControl("BaseOctets 2", "IP~Second Octet", "Text", 239, 514, 48, 30, {
+      IsReadOnly = true,
+      Color = theme.panelRaised,
+      FontSize = 11
+    })
+    addLabel(".", 289, 518, 8, 20, 12, theme.muted)
+    addControl("ThirdOctet", "IP~Third Octet", "ComboBox", 300, 514, 62, 30, {
+      FontSize = 10
+    })
+    addLabel(".", 364, 518, 8, 20, 12, theme.muted)
+    addControl("LastOctet", "IP~Last Octet", "ComboBox", 375, 514, 66, 30, {
+      FontSize = 10
+    })
+    addLabel("IP settings can be changed before assignment.", 478, 519, 278, 18, 9, theme.muted)
+  
+    addPanel("PAIRING STATUS", 20, 584, 500, 176)
+    addControl("PairingByNameDebug", "Debug~Status", "Text", 38, 610, 464, 128, {
+      IsReadOnly = true,
+      Color = theme.text,
+      Fill = theme.panelRaised,
+      StrokeColor = theme.border,
+      FontSize = 10
+    })
+    addPanel("DEFAULT NAMING", 535, 584, 240, 176)
+    addLabel("Restore the peripheral's factory name.", 553, 614, 204, 36, 10, theme.muted)
+    addControl("ResetName", "Action~Reset Name", "Button", 553, 678, 204, 42, {
+      Color = theme.panelRaised,
+      Legend = "RESET NAME"
+    })
+  
+  elseif CurrentPage == "Network Device List" then
+    deviceCount = math.max(1, math.min(150, deviceCount))
+    addBackground()
+    addPanel("", 20, 16, 755, 70)
+    addLabel("NETWORK OVERVIEW", 38, 27, 430, 28, 20, theme.text)
+    addLabel("DISCOVERED PERIPHERALS  /  NETWORK STATUS", 40, 56, 470, 16, 9, theme.muted)
+    addControl("Get", "Action~Refresh", "Button", 660, 32, 96, 36, {
+      Legend = "REFRESH",
+      Color = theme.accent
+    })
+  
+    addPanel("LAN A", 20, 101, 365, 90)
+    addControl("CurrentLanAConfig", "LanAConfig", "Text", 38, 126, 329, 52, {
+      IsReadOnly = true,
+      Color = theme.text,
+      Fill = theme.panelRaised,
+      FontSize = 9
+    })
+    addPanel("LAN B", 410, 101, 365, 90)
+    addControl("CurrentLanBConfig", "LanBConfig", "Text", 428, 126, 329, 52, {
+      IsReadOnly = true,
+      Color = theme.text,
+      Fill = theme.panelRaised,
+      FontSize = 9
+    })
+  
+    addPanel("NETWORK SETTINGS", 20, 205, 755, 116)
+    local networkFields = {
+      {"NewNetmask", "Netmask", "Network~Netmask", 38, 132},
+      {"NewGateway", "Gateway", "Network~Gateway", 185, 132},
+      {"NewNetworkPrefix", "NetworkPrefix", "Network~Prefix", 332, 132},
+      {"NewIPRange", "IPRange", "Network~IP Range", 479, 132}
+    }
+    for _, field in ipairs(networkFields) do
+      local controlName, labelText, prettyName, x, width = field[1], field[2], field[3], field[4], field[5]
+      addLabel(string.upper(labelText), x, 239, width, 15, 9, theme.muted)
+      addControl(controlName, prettyName, "Text", x, 258, width, 32, {
+        IsReadOnly = true,
+        Color = theme.text,
+        Fill = theme.panelRaised,
+        FontSize = 10
+      })
+    end
+    addLabel("IP MODE", 648, 239, 110, 15, 9, theme.muted)
+    addControl("IPMode", "Network~IP Mode", "Button", 648, 258, 110, 32, {
+      Legend = "DHCP",
+      Color = theme.panelRaised
+    })
+  
+    addPanel("DISCOVERED PERIPHERALS", 20, 335, 755, math.max(420, 100 + deviceCount * 22))
+    addLabel("MODEL FILTER", 34, 355, 136, 15, 9, theme.muted)
+    addControl("DeviceModelFilter", "Devices~Model Filter", "ComboBox", 34, 373, 220, 30, {
+      FontSize = 10
+    })
+    addControl("DeviceListSummary", "Devices~Filter Summary", "Text", 270, 373, 488, 30, {
+      IsReadOnly = true,
+      Color = theme.text,
+      Fill = theme.panelRaised,
+      FontSize = 9
+    })
+    local headerY = 414
+    local columns = {
+      {"ID", 34, 48},
+      {"MODEL", 92, 126},
+      {"DEVICE NAME", 226, 136},
+      {"IP ADDRESS", 370, 128},
+      {"DESIGN ON DEVICE", 508, 250}
+    }
+    for _, column in ipairs(columns) do
+      addLabel(column[1], column[2], headerY, column[3], 16, 9, theme.accent)
+    end
+  
+    local rowY = headerY + 20
+    for i = 1, deviceCount do
+      local y = rowY + ((i - 1) * 22)
+      local rowColor = i % 2 == 0 and theme.rowB or theme.rowA
+      addControl("ID " .. i, "Device " .. i .. "~ID", "Button", 34, y, 48, 20, {
+        Legend = "ID_OFF",
+        Color = theme.panelRaised,
+        FontSize = 8
+      })
+      addControl("DeviceModel " .. i, "Device " .. i .. "~Model", "Text", 92, y, 126, 20, {
+        IsReadOnly = true,
+        Color = rowColor,
+        FontSize = 9
+      })
+      addControl("DeviceName " .. i, "Device " .. i .. "~Name", "Text", 226, y, 136, 20, {
+        IsReadOnly = true,
+        Color = rowColor,
+        FontSize = 9
+      })
+      addControl("DeviceIP " .. i, "Device " .. i .. "~IP", "Text", 370, y, 128, 20, {
+        IsReadOnly = true,
+        Color = rowColor,
+        FontSize = 9
+      })
+      addControl("DesignOnDevice " .. i, "Device " .. i .. "~Design", "Text", 508, y, 250, 20, {
+        IsReadOnly = true,
+        Color = rowColor,
+        FontSize = 9
+      })
+    end
+  
+  elseif CurrentPage == "Extra Stuff" then
+    addBackground()
+    addPanel("", 20, 16, 755, 70)
+    addLabel("DEVICE UTILITIES", 38, 27, 430, 28, 20, theme.text)
+    addLabel("MAINTENANCE  /  DIAGNOSTICS", 40, 56, 470, 16, 9, theme.muted)
+  
+    addPanel("PERIPHERAL TOOLS", 20, 110, 755, 280)
+    addLabel("Choose a discovered peripheral to inspect or manage.", 42, 140, 690, 18, 10, theme.muted)
+    addLabel("DEVICE", 42, 178, 280, 15, 9, theme.muted)
+    addControl("Device", "Utilities~Device", "ComboBox", 42, 197, 330, 32, {
+      FontSize = 11
+    })
+    addLabel("IP ADDRESS", 398, 178, 300, 15, 9, theme.muted)
+    addControl("IP", "Utilities~IP", "Text", 398, 197, 330, 32, {
+      IsReadOnly = true,
+      Color = theme.text,
+      Fill = theme.panelRaised,
+      FontSize = 11
+    })
+    addLabel("Actions", 42, 255, 300, 18, 10, theme.text)
+    addControl("Reboot", "Utilities~Reboot", "Button", 42, 286, 180, 42, {
+      Legend = "REBOOT DEVICE",
+      Color = theme.panelRaised
+    })
+    addControl("DownloadLogfile", "Utilities~Download Log", "Button", 240, 286, 220, 42, {
+      Legend = "DOWNLOAD LOG FILE",
+      Color = theme.accent
+    })
+  end
+  return layout, graphics
+end
+
+--Start event based logic
+if Controls then
+  rapidjson = require("rapidjson")
+  
+  -- Global tables for device and inventory management
+  Devices = {}                -- List of device names
+  DevicesLookup = {}          -- Maps device names to indices
+  IPs = {}                    -- List of device IPs
+  DeviceTypes = {}            -- List of device models
+  DevicesAndIPs = {}          -- Lookup: device name -> IP
+  DeviceTypeLookup = {}       -- Lookup: device name -> model
+  tabModeltoName = {}         -- Lookup: model -> list of device names for choices
+  tabModelNameLookup = {}     -- Lookup: device name -> index in tabModeltoName
+  Peripherals = {}            -- Stores detailed peripheral configurations
+  Cores = {}  
+  tabDebugString = {}                -- Stores core device details
+  DiscoveredDevices = {}
+  Inventory = {
+    Locations = {""},
+    LocationsLookup = {},
+    Models = {},            -- List of inventory models
+    ModelsLookup = {},      -- Quick lookup for models
+    Names = {},             -- List of inventory names
+    NamesLookup = {},       -- Quick lookup for names
+    ModelToName = {},       -- Mapping: model -> name
+    NameToModel = {},       -- Mapping: name -> model
+    NameToLocation = {},    -- Mapping: name -> location
+    ByModel = {},           -- Lookup: model -> list of names
+    ByLocation = {},        -- Mapping: location -> models and names
+    ByModelLookup = {},     -- Tracks models in ByModel
+    Types = {               -- Supported device types
+      ["Network Microphone"] = true, ["Camera"] = true, ["Network Loudspeaker"] = true,
+      ["Control I/O"] = true, ["Amplifier"] = true, ["Audio I/O"] = true,
+      ["Audio Video I/O"] = true, ["Peripheral"] = true, ["Video I/O"] = true,
+      ["Control Interface"] = true, ["Page Station"] = true
+    }
+  }
+  
+  LastStatusCodes = {}        -- Tracks last known status codes for inventory items
+  inventoryTimer = Timer.New() -- Timer for periodic inventory updates
+  RefreshTimer = Timer.New()
+  local idPairingGeneration = 0
+  local idPairingBusy = false
+  local idModePreparedModel = nil
+  local idModeClearingModel = nil
+  local navigationCursorName = ""
+  local lastSuccessfulInventoryName = ""
+  local lastHandledInventoryName = ""
+  local updateDeviceList
+  local deviceDiscoveryGeneration = 0
+  local deviceDetailViewGeneration = 0
+  local discoveryInProgress = false
+  local discoveryRefreshRequested = false
+  local activeIDPollCycle = nil
+  local peripheralRequestQueue = {}
+  local peripheralRequestsInFlight = 0
+  local MAX_CONCURRENT_PERIPHERAL_REQUESTS = 4
+  local MAX_DEVICE_DETAIL_ROWS = 150
+  -- Network globals
+  broadcastRange = ""         -- Broadcast address for the network
+  netMask = ""          -- Subnet mask for the network
+  t = 1                 -- Global index for device control updates
+  
+  --Debug level settings
+  DebugSetting = Properties["Debug Print"].Value
+  -- Set design name on startup
+  Controls.LocalDesignName.String = Design.GetStatus().DesignName
+  Controls.AssignToDevice.String = ""
+  Controls.InventoryLocation.Color = ""
+  Controls.InventoryModel.Color = ""
+  Controls.InventoryName.Color = ""
+  -- Initialize device controls to a cleared state
+  refresh = false
+  for i = 1, #Controls.DeviceModel do
+    Controls.DeviceModel[i].String = ""
+    Controls.DeviceName[i].String = ""
+    Controls.DeviceIP[i].String = ""
+  end
+  Controls.Assign.Legend = "Assign\nto\nPeripheral" 
+  
+  local function sortNames(values)
+    table.sort(values, function(a, b)
+      local lowerA, lowerB = string.lower(a), string.lower(b)
+      if lowerA == lowerB then return a < b end
+      return lowerA < lowerB
+    end)
+  end
+  
+  local function appendUnique(values, lookup, value)
+    if value and value ~= "" and not lookup[value] then
+      lookup[value] = true
+      table.insert(values, value)
+    end
+  end
+  
+  local function withEmptyChoice(values)
+    local choices = {""}
+    for _, value in ipairs(values) do
+      table.insert(choices, value)
+    end
+    return choices
+  end
+  
+  local function pumpPeripheralRequestQueue()
+    while peripheralRequestsInFlight < MAX_CONCURRENT_PERIPHERAL_REQUESTS
+      and #peripheralRequestQueue > 0 do
+      local queued = table.remove(peripheralRequestQueue, 1)
+      peripheralRequestsInFlight = peripheralRequestsInFlight + 1
+      local eventHandler = queued.request.EventHandler
+      queued.request.EventHandler = function(...)
+        peripheralRequestsInFlight = peripheralRequestsInFlight - 1
+        if eventHandler then eventHandler(...) end
+        pumpPeripheralRequestQueue()
+      end
+      queued.send(queued.request)
+    end
+  end
+  
+  local function queuePeripheralRequest(request, method, category, onCancel)
+    local send = method == "Upload" and HttpClient.Upload or HttpClient.Download
+    table.insert(peripheralRequestQueue, {
+      request = request,
+      send = send,
+      category = category,
+      onCancel = onCancel
+    })
+    pumpPeripheralRequestQueue()
+  end
+  
+  local function cancelQueuedPeripheralRequests(category)
+    local retained = {}
+    for _, queued in ipairs(peripheralRequestQueue) do
+      if queued.category == category then
+        if queued.onCancel then queued.onCancel() end
+      else
+        table.insert(retained, queued)
+      end
+    end
+    peripheralRequestQueue = retained
+  end
+  
+  -- Debug Print function to display in UCI 
+  function DisplayPrint(str)
+    -- Add the new string to the debug table
+    table.insert(tabDebugString, str)
+    
+    -- If we have more than 5 lines, remove the oldest one
+    if #tabDebugString > 5 then
+      table.remove(tabDebugString, 1)
+    end
+    -- Combine all strings with line breaks
+    local displayText = table.concat(tabDebugString, "\n")
+    -- Update the debug display control if it exists
+    Controls.PairingByNameDebug.String = displayText
+    print(str)
+  end
+  
+  -- Debug print function that respects the debug level setting
+  function DebugPrint(str, type) 
+    -- If debug is set to "None", don't print anything
+    if DebugSetting == "None" then
+        return
+    end
+    -- Only print to console based on debug setting
+    if DebugSetting == "All" then
+        print(str)
+    elseif DebugSetting == type then
+        print(str)
+    end
+  end
+  
+  -- Function to add debug prints for function entry
+  function DebugFunctionEntry(funcName, ...)
+    local args = {...}
+    local argStr = ""
+    for i, arg in ipairs(args) do
+        if type(arg) == "string" then
+            argStr = argStr .. (i > 1 and ", " or "") .. '"' .. arg .. '"'
+        else
+            argStr = argStr .. (i > 1 and ", " or "") .. tostring(arg)
+        end
+    end
+    DebugPrint("Function Enter: " .. funcName .. "(" .. argStr .. ")", "Function Calls")
+  end
+  
+  -- Function to add debug prints for function exit
+  function DebugFunctionExit(funcName, result)
+    if result then
+        DebugPrint("Function Exit: " .. funcName .. " -> " .. tostring(result), "Function Calls")
+    else
+        DebugPrint("Function Exit: " .. funcName, "Function Calls")
+    end
+  end
+  
+  -- Function to add debug prints for network requests
+  function DebugNetworkRequest(url, method, data)
+    DebugPrint("Network Request: " .. method .. " " .. url, "Tx")
+    if data then
+        DebugPrint("Request Data: " .. tostring(data), "Tx")
+    end
+  end
+  
+  -- Function to add debug prints for network responses
+  function DebugNetworkResponse(url, code, data)
+    DebugPrint("Network Response: " .. url .. " -> " .. code, "Rx")
+    if data then
+        DebugPrint("Response Data: " .. tostring(data), "Rx")
+    end
+  end
+  
+  function prettyPrintTable(tab)
+    print("Table:\n" .. rapidjson.encode(tab, { pretty = true }))
+  end
+  
+  -- **Calculate network prefix from netmask and broadcast address**
+  -- Returns a CIDR notation prefix (e.g., "192.168.1.0/24") and sets control choices
+  function calculateNetworkPrefix(netmask, broadcast)
+    local cidrMap = {
+      ["255.255.255.0"] = 24, ["255.255.254.0"] = 23, ["255.255.252.0"] = 22,
+      ["255.255.248.0"] = 21, ["255.255.240.0"] = 20, ["255.255.224.0"] = 19,
+      ["255.255.192.0"] = 18, ["255.255.128.0"] = 17, ["255.255.0.0"] = 16
+    }
+    local cidr = cidrMap[netmask] or 24
+  
+    local octets = {}
+    for octet in broadcast:gmatch("%d+") do
+      octets[#octets + 1] = tonumber(octet)
+    end
+  
+    local hostBits = 32 - cidr
+    local hostRange = 2 ^ hostBits - 1
+    local networkFourth = octets[4] - (octets[4] % (hostRange + 1))
+    local networkThird = octets[3]
+    Controls.BaseOctets[1].String = octets[1]
+    Controls.BaseOctets[2].String = octets[2]
+    local thirdOctetChoices = {}
+    if cidr >= 24 then
+      thirdOctetChoices = { tostring(networkThird) }
+    else
+      local subnetBits = 24 - cidr
+      local subnetRange = 2 ^ subnetBits
+      local baseThird = networkThird - (networkThird % subnetRange)
+      for i = 0, subnetRange - 1 do
+        table.insert(thirdOctetChoices, tostring(math.floor(baseThird + i)))
+      end
+    end
+  
+    local lastOctetChoices = {}
+    for i = 1, 254 do
+        table.insert(lastOctetChoices, tostring(i))
+    end
+  
+    Controls.ThirdOctet.Choices = thirdOctetChoices
+    Controls.LastOctet.Choices = lastOctetChoices
+    Controls.ThirdOctet.String = thirdOctetChoices[1] or "1"
+    Controls.LastOctet.String = "1"
+  
+    return string.format("%d.%d.%d.%d/%d", octets[1], octets[2], networkThird, networkFourth, cidr)
+  end
+  
+  -- **Populate network interface controls with current LAN settings**
+  function populateNetworkInterfaceControls()
+    local ni = Network.Interfaces()
+    local lanAConfig, lanBConfig = {}, {}
+  
+    for _, item in ipairs(ni) do
+      if item.Interface == "LAN A" then
+        broadcastRange = item.BroadcastAddress
+        netMask = item.Netmask
+        Controls.NewNetworkPrefix.String = calculateNetworkPrefix(item.Netmask, item.BroadcastAddress)
+        Controls.NewNetmask.String = Controls.NewNetmask.String == "" and item.Netmask or Controls.NewNetmask.String
+        Controls.NewGateway.String = Controls.NewGateway.String == "" and item.Gateway or Controls.NewGateway.String
+        Controls.NewIPRange.String = Controls.NewIPRange.String == "" and calculateIPRangeFromGateway(Controls.NewNetworkPrefix.String) or Controls.NewIPRange.String
+        lanAConfig = { Interface = "LAN A", Address = item.Address, Netmask = item.Netmask, Gateway = item.Gateway, BroadcastAddress = item.BroadcastAddress }
+      elseif item.Interface == "LAN B" then
+        lanBConfig = { Interface = "LAN B", Address = item.Address, Netmask = item.Netmask, Gateway = item.Gateway, BroadcastAddress = item.BroadcastAddress }
+      end
+    end
+  
+    Controls.CurrentLanAConfig.String = rapidjson.encode(lanAConfig, {pretty = true})
+    Controls.CurrentLanBConfig.String = rapidjson.encode(lanBConfig, {pretty = true})
+  end
+  
+  
+  
+  
+  -- **Update inventory from design data and detect status changes**
+  local function getInventoryModels(location)
+    local locationData = Inventory.ByLocation[location]
+    return locationData and locationData.Models or {}
+  end
+  
+  local function getInventoryNames(location, model)
+    local locationData = Inventory.ByLocation[location]
+    if not locationData then return {} end
+    return locationData.ByModel[string.upper(model or "")] or {}
+  end
+  
+  local function listContains(values, value)
+    for _, candidate in ipairs(values) do
+      if candidate == value then return true end
+    end
+    return false
+  end
+  
+  local function getDeviceNamesForModel(model)
+    local names = {}
+    local modelKey = string.upper(model or "")
+    for name, deviceModel in pairs(DeviceTypeLookup) do
+      if string.upper(deviceModel or "") == modelKey and DevicesAndIPs[name] then
+        table.insert(names, name)
+      end
+    end
+    sortNames(names)
+    return withEmptyChoice(names)
+  end
+  
+  local function updateNavigationButtons()
+    local names = getInventoryNames(Controls.InventoryLocation.String, Controls.InventoryModel.String)
+    local cursor = Controls.InventoryName.String
+    if cursor == "" or not listContains(names, cursor) then
+      cursor = navigationCursorName
+    end
+    if cursor == "" or not listContains(names, cursor) then
+      cursor = lastSuccessfulInventoryName
+    end
+  
+    local index
+    for i, name in ipairs(names) do
+      if name == cursor then
+        index = i
+        break
+      end
+    end
+  
+    local hasNames = #names > 0
+    Controls.PrevDevice.IsDisabled = not hasNames or (index ~= nil and index <= 1)
+    Controls.NextDevice.IsDisabled = not hasNames or (index ~= nil and index >= #names)
+  end
+  
+  local function refreshInventorySelectors()
+    Controls.InventoryLocation.Choices = withEmptyChoice(Inventory.Locations)
+    local location = Controls.InventoryLocation.String
+    if location ~= "" and not Inventory.ByLocation[location] then
+      location = ""
+      Controls.InventoryLocation.String = ""
+    end
+  
+    local models = getInventoryModels(location)
+    Controls.InventoryModel.Choices = withEmptyChoice(models)
+    local model = Controls.InventoryModel.String
+    if model ~= "" and not listContains(models, model) then
+      model = ""
+      Controls.InventoryModel.String = ""
+    end
+  
+    local names = getInventoryNames(location, model)
+    Controls.InventoryName.Choices = withEmptyChoice(names)
+    if Controls.InventoryName.String ~= "" and not listContains(names, Controls.InventoryName.String) then
+      Controls.InventoryName.String = ""
+    end
+  
+    Controls.AssignToDevice.Choices = model == "" and {""} or getDeviceNamesForModel(model)
+    if Controls.AssignToDevice.String ~= ""
+      and not listContains(Controls.AssignToDevice.Choices, Controls.AssignToDevice.String) then
+      Controls.AssignToDevice.String = ""
+    end
+    updateNavigationButtons()
+  end
+  
+  function updateInventory()
+    local statusChanged = false
+    local currentStatuses = {}
+    local nextInventory = {
+      Locations = {},
+      LocationsLookup = {},
+      Models = {},
+      ModelsLookup = {},
+      Names = {},
+      NamesLookup = {},
+      ModelToName = {},
+      NameToModel = {},
+      NameToLocation = {},
+      ByModel = {},
+      ByLocation = {},
+      ByModelLookup = {},
+      Types = Inventory.Types
+    }
+  
+    for _, item in pairs(Design.GetInventory()) do
+      local model = item.Model
+      local name = item.Name
+      local code = item.Status and item.Status.Code
+      if name and code ~= nil then
+        currentStatuses[name] = code
+        if LastStatusCodes[name] ~= nil and LastStatusCodes[name] ~= code then
+          statusChanged = true
+        end
+      end
+  
+      if name and model and (Inventory.Types[item.Type] or item.Type == "") then
+        local location = item.Location
+        if type(location) == "string" then
+          location = location:match("^%s*(.-)%s*$")
+        end
+        if type(location) ~= "string" or location == "" then
+          location = "Unassigned"
+        end
+        local modelKey = string.upper(model)
+        appendUnique(nextInventory.Locations, nextInventory.LocationsLookup, location)
+        appendUnique(nextInventory.Models, nextInventory.ModelsLookup, model)
+        appendUnique(nextInventory.Names, nextInventory.NamesLookup, name)
+        nextInventory.ModelToName[model] = nextInventory.ModelToName[model] or name
+        nextInventory.NameToModel[name] = model
+        nextInventory.NameToLocation[name] = location
+        nextInventory.ByModel[modelKey] = nextInventory.ByModel[modelKey] or {}
+        table.insert(nextInventory.ByModel[modelKey], name)
+        nextInventory.ByLocation[location] = nextInventory.ByLocation[location] or {
+          Models = {},
+          ModelLookup = {},
+          ByModel = {}
+        }
+        local locationData = nextInventory.ByLocation[location]
+        appendUnique(locationData.Models, locationData.ModelLookup, model)
+        locationData.ByModel[modelKey] = locationData.ByModel[modelKey] or {}
+        table.insert(locationData.ByModel[modelKey], name)
+      end
+    end
+  
+    for _, locationData in pairs(nextInventory.ByLocation) do
+      sortNames(locationData.Models)
+      for _, names in pairs(locationData.ByModel) do sortNames(names) end
+    end
+    for _, names in pairs(nextInventory.ByModel) do sortNames(names) end
+    sortNames(nextInventory.Locations)
+    sortNames(nextInventory.Models)
+    sortNames(nextInventory.Names)
+    nextInventory.Types = Inventory.Types
+    Inventory = nextInventory
+    LastStatusCodes = currentStatuses
+    refreshInventorySelectors()
+  
+    if refresh == true or statusChanged then
+      getDevices()
+    end
+  end
+  -- Start inventory update timer (runs every 5 seconds)
+  inventoryTimer.EventHandler = updateInventory
+  inventoryTimer:Start(5)
+  updateInventory()
+  
+  updateDeviceList = function(forceDetailReads)
+    local models = {}
+    local modelLookup = {}
+    for _, device in ipairs(DiscoveredDevices) do
+      local model = device.model
+      local modelKey = string.upper(model or "")
+      if modelKey ~= "" and not modelLookup[modelKey] then
+        modelLookup[modelKey] = true
+        table.insert(models, model)
+      end
+    end
+    sortNames(models)
+    local modelChoices = {"All Models"}
+    for _, model in ipairs(models) do table.insert(modelChoices, model) end
+  
+    local selectedModel = Controls.DeviceModelFilter.String
+    local selectedKey = string.upper(selectedModel or "")
+    local selectedIsValid = selectedKey == "ALL MODELS"
+    for i = 2, #modelChoices do
+      if string.upper(modelChoices[i]) == selectedKey then
+        selectedModel = modelChoices[i]
+        selectedIsValid = true
+        break
+      end
+    end
+    if not selectedIsValid then selectedModel = "All Models" end
+    Controls.DeviceModelFilter.Choices = modelChoices
+    Controls.DeviceModelFilter.String = selectedModel
+  
+    local matches = {}
+    local filterKey = string.upper(selectedModel)
+    for _, device in ipairs(DiscoveredDevices) do
+      if filterKey == "ALL MODELS" or string.upper(device.model or "") == filterKey then
+        table.insert(matches, device)
+      end
+    end
+    table.sort(matches, function(a, b)
+      local lowerA, lowerB = string.lower(a.name), string.lower(b.name)
+      if lowerA == lowerB then return a.name < b.name end
+      return lowerA < lowerB
+    end)
+  
+    deviceDetailViewGeneration = deviceDetailViewGeneration + 1
+    local viewGeneration = deviceDetailViewGeneration
+    cancelQueuedPeripheralRequests("device-detail")
+    DevicesLookup = {}
+    local rowCount = math.min(#Controls.DeviceModel, MAX_DEVICE_DETAIL_ROWS)
+    local displayedCount = math.min(#matches, rowCount)
+    for i = 1, #Controls.DeviceModel do
+      Controls.DeviceModel[i].String = ""
+      Controls.DeviceName[i].String = ""
+      Controls.DeviceIP[i].String = ""
+      Controls.DesignOnDevice[i].String = ""
+      Controls.DesignOnDevice[i].Color = ""
+      Controls.ID[i].String = ""
+      Controls.ID[i].Boolean = false
+      Controls.ID[i].Legend = "ID_OFF"
+      Controls.IDPairing[i].String = ""
+      Controls.PeripheralInfo[i].String = ""
+      Controls.DeviceModel[i].IsInvisible = true
+      Controls.DeviceName[i].IsInvisible = true
+      Controls.DeviceIP[i].IsInvisible = true
+      Controls.DesignOnDevice[i].IsInvisible = true
+      Controls.ID[i].IsInvisible = true
+      Controls.IDPairing[i].IsInvisible = true
+      Controls.PeripheralInfo[i].IsInvisible = true
+    end
+  
+    for i = 1, displayedCount do
+      local device = matches[i]
+      Controls.DeviceModel[i].String = device.model or ""
+      Controls.DeviceName[i].String = device.name
+      Controls.DeviceIP[i].String = device.ip
+      Controls.DeviceModel[i].IsInvisible = false
+      Controls.DeviceName[i].IsInvisible = false
+      Controls.DeviceIP[i].IsInvisible = false
+      Controls.DesignOnDevice[i].IsInvisible = false
+      Controls.ID[i].IsInvisible = false
+      Controls.IDPairing[i].IsInvisible = false
+      Controls.PeripheralInfo[i].IsInvisible = false
+      DevicesLookup[device.name] = i
+      local peripheral = Peripherals[device.name]
+      if peripheral and peripheral.design and not forceDetailReads then
+        Controls.DesignOnDevice[i].String = peripheral.design
+        local colorMap = { [""] = "", [Controls.LocalDesignName.String] = "green" }
+        Controls.DesignOnDevice[i].Color = colorMap[peripheral.design] or "yellow"
+        Controls.ID[i].Legend = "ID: " .. string.upper(peripheral.id or "N/A")
+        Controls.ID[i].Boolean = peripheral.id == "on"
+      else
+        downloadFromPeripherals(
+          device.ip, device.name, i, deviceDiscoveryGeneration, viewGeneration
+        )
+      end
+    end
+  
+    local summary = string.format(
+      "Showing %d of %d matching devices (Device Count: %d).",
+      displayedCount, #matches, #Controls.DeviceModel
+    )
+    if #matches > MAX_DEVICE_DETAIL_ROWS then
+      summary = summary .. " WARNING: List capped at 150; additional devices are not shown."
+    elseif #matches > displayedCount then
+      summary = summary .. string.format(
+        " Increase Device Count to show more (maximum %d).", MAX_DEVICE_DETAIL_ROWS
+      )
+    end
+    Controls.DeviceListSummary.String = summary
+  end
+  
+  -- **Download configuration from a peripheral device**
+  function downloadFromPeripherals(ip, name, t, generation, viewGeneration)
+    DebugFunctionEntry("downloadFromPeripherals", ip, name, t)
+    DebugPrint("Downloading configuration from " .. name .. " at " .. ip, "tx")
+    
+    queuePeripheralRequest({
+      Url = "https://" .. ip .. "/cgi-bin/status_xml",
+      Timeout = 30,
+      Headers = {},
+      EventHandler = function(_, code, data)
+        if generation and generation ~= deviceDiscoveryGeneration then return end
+        if viewGeneration and viewGeneration ~= deviceDetailViewGeneration then return end
+        if Controls.DeviceName[t].String ~= name then return end
+        DebugNetworkResponse("https://" .. ip .. "/cgi-bin/status_xml", code, data)
+        if code == 200 then
+          DebugPrint("Received configuration from " .. name, "rx")
+          Peripherals[name] = {
+            ip = ip,
+            mac = data:match("<mac_address>(.-)</mac_address>") or "N/A",
+            design = data:match("<pretty_name>(.-)</pretty_name>") or "N/A",
+            firmware = data:match("<firmware_version>(.-)</firmware_version>") or "N/A",
+            hostname = data:match("<device_name%s*>(.-)</device_name>") or "N/A",
+            id = data:match("<id_mode>(.-)</id_mode>") or "N/A",
+            model = data:match("<device_model_pretty>(.-)</device_model_pretty>") or "N/A",
+            interface = {
+              mode = data:match("<mode%s*>(.-)</mode>") or "N/A",
+              address = data:match("<address%s*>(.-)</address>") or "N/A",
+              netmask = data:match("<mask%s*>(.-)</mask>") or "N/A",
+              default_route = data:match("<gateway%s*>(.-)</gateway>") or "N/A",
+            }
+          }
+          Controls.DesignOnDevice[t].String = Peripherals[name].design
+          local colorMap = { [""] = "", [Controls.LocalDesignName.String] = "green" }
+          Controls.DesignOnDevice[t].Color = colorMap[Controls.DesignOnDevice[t].String] or "yellow"
+          Controls.ID[t].Legend = "ID: " .. string.upper(Peripherals[name].id)
+          Controls.ID[t].Boolean = (Peripherals[name].id == "on")
+        else
+          DebugPrint("Failed to download configuration from " .. name .. ": " .. code, "rx")
+        end
+      end
+    }, "Download", "device-detail")
+    DebugFunctionExit("downloadFromPeripherals")
+  end
+  
+  -- **Map models to device names for assignment choices**
+  function modelHandling(model, name)
+    if not model or model == "" or not name or name == "" then
+      return
+    end
+    model = string.upper(model)
+    if not tabModeltoName[model] then
+      tabModeltoName[model] = {}
+    end
+    if not tabModelNameLookup[name] then
+      table.insert(tabModeltoName[model], name)
+      for i = 1, #tabModeltoName[model] do
+        if tabModeltoName[model][i] == name then
+          tabModelNameLookup[name] = i
+          break
+        end
+      end
+    end
+  end
+  
+  -- **Parse discovered devices from core HTTP response**
+  function parseDevices(headers, code, data)
+    DebugPrint("Starting device discovery", "function")
+    if code ~= 200 then
+      DisplayPrint("Failed to fetch devices: HTTP " .. tostring(code))
+      DebugPrint("Failed to fetch devices: " .. tostring(code), "rx")
+      return
+    end
+    local decoded = rapidjson.decode(data)
+    local discovered = {}
+    local cores = {}
+    for _, elem in pairs(decoded) do
+      if elem.type ~= "core" then
+        if not elem.name or not elem.lan_a_ip then
+          DisplayPrint("Skipping discovered peripheral without name or LAN A IP")
+        else
+          if refreshname and elem.name == string.lower(refreshname) then
+            refresh = false
+            DebugPrint("Refresh stopped for " .. elem.name, "function")
+          end
+          DebugPrint("Found device: " .. elem.name .. " with IP: " .. elem.lan_a_ip, "rx")
+          table.insert(discovered, {
+            name = elem.name,
+            ip = elem.lan_a_ip,
+            model = elem.part_number or ""
+          })
+        end
+      else
+        DebugPrint("Found core device: " .. elem.name, "rx")
+        cores[elem.name] = elem
+      end
+    end
+  
+    table.sort(discovered, function(a, b)
+      local lowerA, lowerB = string.lower(a.name), string.lower(b.name)
+      if lowerA == lowerB then return a.name < b.name end
+      return lowerA < lowerB
+    end)
+  
+    deviceDiscoveryGeneration = deviceDiscoveryGeneration + 1
+    cancelQueuedPeripheralRequests("device-detail")
+    Devices, IPs, DeviceTypes, DevicesAndIPs, DeviceTypeLookup = {}, {}, {}, {}, {}
+    tabModeltoName, tabModelNameLookup, DevicesLookup = {}, {}, {}
+    Peripherals, Cores = {}, cores
+    DiscoveredDevices = discovered
+    for _, device in ipairs(discovered) do
+      table.insert(Devices, device.name)
+      table.insert(IPs, device.ip)
+      table.insert(DeviceTypes, device.model)
+      DevicesAndIPs[device.name] = device.ip
+      DeviceTypeLookup[device.name] = device.model
+      Peripherals[device.name] = {ip = device.ip}
+      modelHandling(device.model, device.name)
+    end
+    for _, names in pairs(tabModeltoName) do sortNames(names) end
+  
+    local deviceChoices = {}
+    for _, name in ipairs(Devices) do table.insert(deviceChoices, name) end
+    Controls.Device.Choices = deviceChoices
+    Controls.AssignToDevice.String = ""
+    Controls.IPMode.Legend = getIPMode()
+    refreshInventorySelectors()
+    updateDeviceList()
+  end
+  
+  -- **Get IP mode (Static or DHCP) and update control states**
+  function getIPMode()
+      local ipMode = Controls.IPMode.Boolean and "Static" or "DHCP"
+      Controls.LastOctet.Color = ""
+      -- Controls.NewNetmask.IsDisabled = not Controls.IPMode.Boolean
+      -- Controls.NewGateway.IsDisabled = not Controls.IPMode.Boolean
+      Controls.ThirdOctet.IsDisabled = not Controls.IPMode.Boolean
+      Controls.LastOctet.IsDisabled = not Controls.IPMode.Boolean
+      -- Controls.NewIPRange.IsDisabled = not Controls.IPMode.Boolean
+      -- Controls.NewNetworkPrefix.IsDisabled = not Controls.IPMode.Boolean
+      return ipMode
+  end
+  
+  function checkForReset ()
+    if Controls.AssignToDevice.String ~= "" and Controls.InventoryName.String ~= "" then 
+      Controls.ResetName.IsDisabled = false
+      Controls.Assign.IsDisabled = false
+    else
+      Controls.ResetName.IsDisabled = true 
+      Controls.Assign.IsDisabled = true
+    end 
+  end
+  
+  
+  -- **Fetch and display all devices on the network**
+  function getDevices()
+    if discoveryInProgress then
+      discoveryRefreshRequested = true
+      return
+    end
+    discoveryInProgress = true
+    discoveryRefreshRequested = false
+  
+    local coreIP = ""
+    for _, item in ipairs(Network.Interfaces()) do
+      if item.Interface == "LAN A" then
+        coreIP = item.Address
+        broadcastRange = item.BroadcastAddress
+        netMask = item.Netmask
+        break
+      end
+    end
+    HttpClient.Download({
+      Url = "https://" .. coreIP .. "/debug/remote_support/network_debug/discovered_devices",
+      Timeout = 30,
+      Headers = {},
+      EventHandler = function(headers, code, data)
+        parseDevices(headers, code, data)
+        discoveryInProgress = false
+        if discoveryRefreshRequested then
+          discoveryRefreshRequested = false
+          Timer.CallAfter(getDevices, 1)
+        end
+      end
+    })
+    populateNetworkInterfaceControls()
+  end
+  
+  -- **Configure a peripheral to use DHCP**
+  function uploadPeripheralNetworkSettings(originalIP, hostname, mode, ip, netmask, defaultRoute, handler)
+    local apiUrl = "https://" .. originalIP .. "/api/v1/network/settings"
+    local legacyUrl = "https://" .. originalIP .. "/cgi-bin/network_configuration_xml"
+    local function isEmptyBadRequest(code, data)
+      return code == 400 and (
+        data == nil
+        or data == ""
+        or (type(data) == "string" and data:match("^%s*{}%s*$") ~= nil)
+        or (type(data) == "table" and next(data) == nil)
+      )
+    end
+    local function uploadLegacyNetworkSettings()
+      local payload = string.format([[<network_configuration>
+      <hostname>%s</hostname>
+      <enable_dns/>
+      <primary_dns/>
+      <secondary_dns/>
+      <interface><name>LAN A</name><mode>%s</mode><address>%s</address><netmask>%s</netmask><default_route>%s</default_route></interface>
+    </network_configuration>]], hostname, mode, ip, netmask, defaultRoute)
+      DebugNetworkRequest(legacyUrl, "POST", payload)
+      queuePeripheralRequest({
+        Url = legacyUrl,
+        Data = payload,
+        Method = "POST",
+        Timeout = 30,
+        Headers = { ["Content-Type"] = "text/xml" },
+        EventHandler = handler
+      }, "Upload", "network-settings")
+    end
+    queuePeripheralRequest({
+      Url = apiUrl,
+      Timeout = 30,
+      Headers = {},
+      EventHandler = function(_, code, data)
+        local url, payload, contentType
+        if code == 404 or code == 405 or isEmptyBadRequest(code, data) then
+          uploadLegacyNetworkSettings()
+          return
+        elseif code == 200 then
+          local decoded, settings = pcall(rapidjson.decode, data)
+          if not decoded or type(settings) ~= "table" or type(settings.interfaces) ~= "table" then
+            handler(nil, 0, "Invalid peripheral network settings response")
+            return
+          end
+          local lanA
+          for _, interface in ipairs(settings.interfaces) do
+            if interface.name == "LAN A" then
+              lanA = interface
+              break
+            end
+          end
+          if not lanA then
+            handler(nil, 0, "Peripheral network settings do not include LAN A")
+            return
+          end
+          settings.hostname = hostname
+          lanA.mode, lanA.address, lanA.netmask, lanA.gateway = mode, ip, netmask, defaultRoute
+          local encoded, result = pcall(rapidjson.encode, settings)
+          if not encoded then
+            handler(nil, 0, "Could not encode peripheral network settings")
+            return
+          end
+          url, payload, contentType = apiUrl, result, "application/json"
+        else
+          handler(nil, code, "Could not read peripheral network settings: " .. tostring(data or code))
+          return
+        end
+        DebugNetworkRequest(url, "POST", payload)
+        queuePeripheralRequest({
+          Url = url,
+          Data = payload,
+          Method = "POST",
+          Timeout = 30,
+          Headers = { ["Content-Type"] = contentType },
+          EventHandler = function(headers, uploadCode, uploadData)
+            if url == apiUrl and isEmptyBadRequest(uploadCode, uploadData) then
+              uploadLegacyNetworkSettings()
+            else
+              handler(headers, uploadCode, uploadData)
+            end
+          end
+        }, "Upload", "network-settings")
+      end
+    }, "Download", "network-settings")
+  end
+  
+  function setPeripheralToDHCP(name)
+    uploadPeripheralNetworkSettings(Peripherals[name].ip, Peripherals[name].hostname or name, "auto", "", "", "", function(_, code, data)
+      DisplayPrint("Set DHCP for " .. name .. ": " .. (code == 200 and "Success" or "Failed: " .. tostring(data)))
+    end)
+  end
+  
+  -- **Configure a peripheral witha new or old name and static IP or DHCP**
+  function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode, onSuccess)
+    DebugFunctionEntry("setPeripheral", oldName, newName, ip, netmask, defaultRoute, mode)
+    DebugPrint("Setting peripheral " .. oldName .. " to " .. newName .. " with mode " .. mode, "function")
+    
+    if mode == "auto" then
+      ip, netmask, defaultRoute = "", "", ""
+    end
+    local originalIP = DevicesAndIPs[oldName]
+    local model = DeviceTypeLookup[oldName]
+    local pairingByID = Controls.PairWithID.Boolean
+    local pairingGeneration = idPairingGeneration
+    local inventoryModel = Controls.InventoryModel.String
+    local inventoryName = Controls.InventoryName.String
+    DebugPrint("Sending configuration to " .. oldName .. " at " .. originalIP, "tx")
+    uploadPeripheralNetworkSettings(originalIP, newName, mode, ip, netmask, defaultRoute, function(_, code, data)
+        DebugNetworkResponse("https://" .. originalIP, code, data)
+        if code == 200 then
+          DebugPrint("Successfully configured " .. newName, "rx")
+          if inventoryName ~= "" and Inventory.NameToModel[inventoryName] then
+            navigationCursorName = inventoryName
+            lastSuccessfulInventoryName = inventoryName
+          end
+          if inventoryModel ~= "" and inventoryName == newName
+            and Controls.InventoryModel.String == inventoryModel
+            and Controls.InventoryName.String == inventoryName
+            and pairingGeneration == idPairingGeneration then
+            Controls.InventoryName.Color = "green"
+          end
+          if mode == "static" then
+            DisplayPrint("✓ Success \t\t Inventory Name:    " .. newName .. " \n\t\t\t Model: " .. model .. " \t Static IP: " .. ip)
+            Controls.Assign.Legend = newName .. " \n✓ Success \n"..ip
+            Timer.CallAfter(function()buildDirectionsString() Controls.Assign.IsDisabled = true  end,5) 
+          else 
+            DisplayPrint("✓ Success \t\t inventory Name:    " .. newName .. " \n\t\t\t Model: " .. model .. " \t IP mode: DHCP")
+            Controls.Assign.Legend = newName .. " \n✓ Success \n DHCP"
+            Timer.CallAfter(function()buildDirectionsString() Controls.Assign.IsDisabled = true end,5) 
+          end 
+          local peripheral = Peripherals[oldName] or {}
+          peripheral.ip = mode == "auto" and originalIP or ip
+          peripheral.hostname = newName
+          Peripherals[newName] = peripheral
+          DevicesAndIPs[newName] = peripheral.ip
+          DeviceTypeLookup[newName] = model
+          for i, discoveredName in ipairs(Devices) do
+            if discoveredName == oldName then
+              Devices[i] = newName
+              break
+            end
+          end
+          for _, device in ipairs(DiscoveredDevices) do
+            if device.name == oldName then
+              device.name = newName
+              device.ip = peripheral.ip
+              break
+            end
+          end
+          for _, names in pairs(tabModeltoName) do
+            for i, name in ipairs(names) do
+              if name == oldName then names[i] = newName end
+            end
+            sortNames(names)
+          end
+          if oldName ~= newName then
+            Peripherals[oldName], DevicesAndIPs[oldName], DeviceTypeLookup[oldName], DevicesLookup[oldName] = nil, nil, nil, nil
+          end
+          local deviceChoices = {}
+          for _, deviceName in ipairs(Devices) do table.insert(deviceChoices, deviceName) end
+          sortNames(deviceChoices)
+          Controls.Device.Choices = deviceChoices
+          if Controls.InventoryName.String == newName and not (pairingByID and Controls.KeepPairWithID.Boolean) then
+            Controls.InventoryName.String = ""
+          end
+          DebugPrint("Setting assign to device choices to empty", "function")
+          Controls.AssignToDevice.Choices = {}
+          updateDeviceList()
+          if onSuccess then onSuccess() end
+        else
+          DebugPrint("Failed to configure " .. newName .. ": " .. tostring(data), "rx")
+          DisplayPrint("\nFailed to configure " .. newName .. ": " .. tostring(data))
+        end
+        if pairingByID and pairingGeneration == idPairingGeneration then
+          idPairingBusy = false
+          if Controls.PairWithID.Boolean then
+            if Controls.KeepPairWithID.Boolean then
+              if code == 200 then clearIDModeForModel(model) end
+            else
+              PairingMode(false)
+            end
+          end
+        end
+        Controls.AssignToDevice.String = ""
+      end)
+    DebugFunctionExit("setPeripheral")
+  end
+  
+  
+  
+  
+  -- **Reset a device's name to a default format (model-MAC last 4)**
+  function resetName(model, name, ip)
+  
+    local i = DevicesLookup[name] or 1
+    model = model or Controls.DeviceModel[i].String
+    if model == "I/O-USB-Bridge" then
+      model = "iousb"
+    end
+    ip = ip or Controls.DeviceIP[i].String
+    local mode = "auto"
+    local mac = ""
+    if not Peripherals[name].mac then 
+      mac = tostring(math.random(100000000000000, 999999999999999)) 
+    else 
+      mac = string.gsub(Peripherals[name].mac or "", ":", "") 
+    end
+    local lastFour = mac:sub(-4)
+    local newName = model .. "-" .. lastFour
+    setPeripheral(name, newName, ip, netMask, Controls.NewGateway.String, mode, function()
+      DisplayPrint("✓ Success\t\t Reset name for " .. name .. " to: " .. newName)
+      refresh = true
+      refreshname = newName
+      Timer.CallAfter(getDevices, 30)
+    end)
+  end
+  
+  -- **Calculate IP range from gateway and netmask**
+  function calculateIPRangeFromGateway(prefix)
+    -- Parse IP and CIDR parts (e.g., "192.168.1.0/24")
+    local ip, cidr = prefix:match("(%d+%.%d+%.%d+%.%d+)/(%d+)")
+    
+    -- Convert to octets array
+    local octets = {}
+    for part in ip:gmatch("%d+") do
+      octets[#octets + 1] = tonumber(part)
+    end
+    cidr = tonumber(cidr)
+    -- Calculate the base network address based on CIDR prefix
+    local base = octets[3] - (octets[3] % (2 ^ (24 - cidr)))
+    -- Return IP range
+    return string.format("%d.%d.%d.1-%d.%d.%d.254", octets[1], octets[2], base, octets[1], octets[2], base + (2 ^ (24 - cidr)) - 1)
+  end
+  -- **Convert netmask to CIDR notation**
+  function getSubnetMaskCIDR(netmask)
+    local cidrMap = {
+      ["255.255.255.0"] = 24, ["255.255.254.0"] = 23, ["255.255.252.0"] = 22,
+      ["255.255.248.0"] = 21, ["255.255.240.0"] = 20, ["255.255.224.0"] = 19,
+      ["255.255.192.0"] = 18, ["255.255.128.0"] = 17, ["255.255.0.0"] = 16
+    }
+    return cidrMap[netmask] or 24
+  end
+  -- **Check if inventory name matches a device name and reset if needed**
+  function checkAndResetNameIfNeeded(device)
+    local inventoryName = string.lower(Controls.InventoryName.String)
+    local assignToDevice = string.lower(device or Controls.AssignToDevice.String)
+    -- Only proceed if inventory name is set and doesn't match the assign to device
+    if inventoryName == assignToDevice then
+        return false
+    end
+    if inventoryName ~= "" and inventoryName ~= assignToDevice then
+      for i = 1, #Controls.DeviceName do
+          -- Check if inventory name matches this device name
+        if inventoryName == string.lower(Controls.DeviceName[i].String) then
+          -- Found a match, reset the name
+          DisplayPrint("⚠️Warning⚠️\t\t Found matching device name: " .. Controls.InventoryName.String)
+          resetName(Controls.DeviceModel[i].String, Controls.DeviceName[i].String, Controls.DeviceIP[i].String)
+          return false
+        end
+      end
+    end
+    
+    return false
+  end
+  
+  -- **Assign a device to an inventory item with IP configuration**
+  function applyAssign(device)
+    DebugPrint("Starting device assignment process", "function")
+    
+    if checkAndResetNameIfNeeded(device) then
+        DebugPrint("Name reset needed, returning early", "function")
+        return
+    end
+  
+    if Controls.InventoryName.String == "" then
+        DebugPrint("Error: Inventory Name cannot be empty", "function")
+        DisplayPrint("\nError: Inventory Name cannot be empty")
+        return
+    end
+    if Controls.AssignToDevice.String == "" and not Controls.PairWithID.Boolean then
+        DebugPrint("Error: Assign To Device cannot be empty", "function")
+        DisplayPrint("\nError: Assign To Device cannot be empty")
+        return
+    end
+  
+    if not Controls.PairWithID.Boolean then
+      device = Controls.AssignToDevice.String
+    end
+  
+    local mode = Controls.IPMode.Boolean and "static" or "auto"
+    DebugPrint("Using IP mode: " .. mode, "function")
+  
+    local oldName = device
+    local peripheralName = Controls.InventoryName.String
+    local originalIP = DevicesAndIPs[device]
+    if not originalIP then
+        DebugPrint("Error: Could not find IP for device " .. oldName, "function")
+        DisplayPrint("\nError: Could not find IP for device " .. oldName)
+        return
+    end
+  
+    local octets = {}
+    for octet in originalIP:gmatch("%d+") do
+      table.insert(octets, octet)
+    end
+    local newIP = string.format("%d.%d.%s.%s", tonumber(octets[1]), tonumber(octets[2]), Controls.ThirdOctet.String, Controls.LastOctet.String)
+    local netmask = Controls.NewNetmask.String or "255.255.254.0"
+    local defaultRoute = Controls.NewGateway.String or "0.0.0.0"
+    
+    DebugPrint("New IP configuration - IP: " .. newIP .. ", Netmask: " .. netmask .. ", Gateway: " .. defaultRoute, "function")
+    
+    if mode == "auto" then
+      DebugPrint("Using DHCP mode, proceeding with configuration", "function")
+      setPeripheral(oldName, peripheralName, newIP, netmask, defaultRoute, mode)
+      return
+    end
+    if newIP == originalIP then
+      DebugPrint("IP unchanged, proceeding with configuration", "function")
+      setPeripheral(oldName, peripheralName, newIP, netmask, defaultRoute, mode)
+      return
+    end
+  
+    DebugPrint("Checking IP availability with ping", "function")
+    local ping = Ping.New(newIP)
+    ping:setTimeoutInterval(2.0)
+    ping:setPingInterval(1.0)
+    local pingComplete = false
+    local timeoutTimer = Timer.New()
+  
+    timeoutTimer.EventHandler = function()
+      if not pingComplete then
+        DebugPrint("Ping timeout - assuming IP is available", "function")
+        DisplayPrint("✓ Ping timeout\t\tassuming IP is available")
+        pingComplete = true
+        ping:stop()
+        setPeripheral(oldName, peripheralName, newIP, netmask, defaultRoute, mode)
+      end
+      timeoutTimer:Stop()
+    end
+    ping.EventHandler = function(response)
+      if not pingComplete then
+        DebugPrint("Warning: IP " .. response.HostName .. " is in use", "function")
+        DisplayPrint("⚠️Warning⚠️ \t\tIP " .. response.HostName .. " in use\n\t\t\t Please check the IP address and try again")
+        Controls.LastOctet.Color = "red"
+        pingComplete = true
+        ping:stop()
+        timeoutTimer:Stop()
+      end
+    end
+    ping.ErrorHandler = function(response)
+      if not pingComplete then
+        DebugPrint("IP " .. response.HostName .. " is available", "function")
+        DisplayPrint("\n Ping failed - IP " .. response.HostName .. " available\n\t\t\t Proceeding with assignment")
+        pingComplete = true
+        ping:stop()
+        timeoutTimer:Stop()
+        setPeripheral(oldName, peripheralName, newIP, netmask, defaultRoute, mode)
+      end
+    end
+    timeoutTimer:Start(3)
+    ping:start(true)
+  end
+  
+  -- **Convert boolean to ID mode string ("on" or "off")**
+  function idMode(bool)
+      return bool and "on" or "off"
+  end
+  
+  function stopIDModeListener()
+    idPairingGeneration = idPairingGeneration + 1
+    RefreshTimer:Stop()
+    activeIDPollCycle = nil
+    cancelQueuedPeripheralRequests("id-poll")
+  end
+  
+  function clearIDModeForModel(model)
+    local modelKey = string.upper(model or "")
+    if idPairingBusy and idModeClearingModel == modelKey then return end
+    stopIDModeListener()
+    local generation = idPairingGeneration
+    idModePreparedModel = nil
+    idModeClearingModel = modelKey
+    local targets = {}
+    for name, deviceModel in pairs(DeviceTypeLookup) do
+      if string.upper(deviceModel or "") == modelKey and DevicesAndIPs[name] then
+        targets[#targets + 1] = { name = name, ip = DevicesAndIPs[name] }
+      end
+    end
+    table.sort(targets, function(a, b)
+      local lowerA, lowerB = string.lower(a.name), string.lower(b.name)
+      if lowerA == lowerB then return a.name < b.name end
+      return lowerA < lowerB
+    end)
+    local pending, failed = #targets, false
+    idPairingBusy = pending > 0
+    local function finish()
+      if generation == idPairingGeneration then
+        idPairingBusy = false
+        idModeClearingModel = nil
+        if not failed and Controls.PairWithID.Boolean
+          and string.upper(Controls.InventoryModel.String or "") == modelKey then
+          idModePreparedModel = modelKey
+          if Controls.InventoryName.String ~= "" then listenForIDMode(modelKey) end
+        elseif failed then
+          idModePreparedModel = nil
+        end
+      end
+    end
+    if pending == 0 then
+      finish()
+      return
+    end
+    for _, target in ipairs(targets) do
+      queuePeripheralRequest({
+        Url = "https://" .. target.ip .. "/cgi-bin/id_mode?mode=off",
+        Timeout = 30,
+        Headers = {},
+        EventHandler = function(_, code, data)
+          if code ~= 200 then
+            failed = true
+            DisplayPrint("Failed to turn off ID mode for " .. target.name .. ": HTTP " .. tostring(code) .. " " .. tostring(data))
+          end
+          pending = pending - 1
+          if pending == 0 then finish() end
+        end
+      }, "Download", "id-off")
+    end
+  end
+  
+  -- **Listen for ID mode on devices of a specific model**
+  -- Used in pairing mode to detect when a device's ID is activated
+  function listenForIDMode(model)
+    if idPairingBusy then return end
+    stopIDModeListener()
+    local modelKey = string.upper(model or "")
+    if not Controls.PairWithID.Boolean or Controls.InventoryName.String == ""
+      or string.upper(Controls.InventoryModel.String or "") ~= modelKey then return end
+    local generation = idPairingGeneration
+    local inventoryName = Controls.InventoryName.String
+    DebugPrint("Starting ID mode listener for model: " .. modelKey, "function")
+    local function finishPollRequest(cycle)
+      if cycle.remaining <= 0 then return end
+      cycle.remaining = cycle.remaining - 1
+      if cycle.remaining == 0 and activeIDPollCycle == cycle then
+        activeIDPollCycle = nil
+      end
+    end
+    RefreshTimer.EventHandler = function()
+      if generation ~= idPairingGeneration or idPairingBusy or not Controls.PairWithID.Boolean then return end
+      if activeIDPollCycle then return end
+      local candidates = tabModeltoName[modelKey] or {}
+      local cycle = {remaining = 0}
+      for _, name in ipairs(candidates) do
+        if DevicesAndIPs[name] then cycle.remaining = cycle.remaining + 1 end
+      end
+      if cycle.remaining == 0 then return end
+      activeIDPollCycle = cycle
+      for _, name in ipairs(candidates) do
+        if DevicesAndIPs[name] then
+          local ip = DevicesAndIPs[name]
+          DebugPrint("Checking ID mode for device: " .. name, "tx")
+          queuePeripheralRequest({
+            Url = "https://" .. ip .. "/cgi-bin/status_xml",
+            Timeout = 30,
+            Headers = {},
+            EventHandler = function(_, code, data)
+              local selectionIsCurrent = generation == idPairingGeneration
+                and not idPairingBusy and Controls.PairWithID.Boolean
+                and Controls.InventoryName.String == inventoryName
+                and string.upper(Controls.InventoryModel.String or "") == modelKey
+              if selectionIsCurrent and code == 200 then
+                local device = name
+                local id = data:match("<id_mode>(.-)</id_mode>") or "N/A"
+                if id == "on" then
+                  DebugPrint("ID mode detected on device: " .. device, "rx")
+                  stopIDModeListener()
+                  idPairingBusy = true
+                  applyAssign(device)
+                  DebugPrint("Turning off ID mode for device: " .. device, "tx")
+                  queuePeripheralRequest({
+                    Url = "https://" .. ip .. "/cgi-bin/id_mode?mode=off",
+                    Timeout = 30,
+                    Headers = {},
+                    EventHandler = function(_, code, data)
+                      if code == 200 then
+                        DebugPrint("Successfully turned off ID mode", "rx")
+                      else
+                        DebugPrint("Failed to turn off ID mode: " .. code, "rx")
+                      end
+                    end
+                  }, "Download", "id-off")
+                end
+              end
+              finishPollRequest(cycle)
+            end
+          }, "Download", "id-poll", function() finishPollRequest(cycle) end)
+        end
+      end
+    end
+    RefreshTimer:Start(5)
+  end
+  
+  -- **Toggle pairing mode for ID-based assignment**
+  
+  function hidePairIdWarning ()
+    local hide = not Controls.PairWithID.Boolean
+     Controls.PairWithIdDirections[2].IsInvisible  = hide 
+  
+    return hide
+  end
+  Controls.Control_2.EventHandler = function ()
+    Controls.PairWithIdDontShowAdgain.Boolean = Controls.Control_2.Boolean
+  end 
+  -- When enabled, listens for ID activation on devices matching the selected model
+  function PairingMode(b)
+  
+    stopIDModeListener()
+    idPairingBusy = false
+    idModePreparedModel = nil
+    idModeClearingModel = nil
+    Controls.PairWithID.Boolean = b
+    if b then
+      hidePairIdWarning ()
+      
+      Controls.InventoryName.String = ""
+      Controls.InventoryModel.String = ""
+      Controls.InventoryName.Color = ""
+      navigationCursorName = ""
+      lastSuccessfulInventoryName = ""
+      Controls.InventoryModel.Choices = withEmptyChoice(getInventoryModels(Controls.InventoryLocation.String))
+      Controls.InventoryName.Choices = {""}
+      lastHandledInventoryName = ""
+      Controls.AssignToDevice.String = ""
+      Controls.AssignToDevice.IsDisabled = true
+      Controls.Assign.IsInvisible = true
+      Controls.ResetName.IsInvisible = true
+      Controls.Assign.IsDisabled = true
+      Controls.IPMode.IsInvisible = true
+      Controls.LastOctet.IsDisabled = true 
+      Controls.ThirdOctet.IsDisabled = true
+      Controls.IPMode.Boolean = false 
+      Controls.IPMode.Legend = getIPMode()
+      for i = 1, #Controls.ID do
+        Controls.ID[i].IsDisabled = true
+      end
+      Controls.NextDevice.IsDisabled = true
+      Controls.PrevDevice.IsDisabled = true
+      modelcheckID = false
+      namecheckID = false
+      peripheralcheckID = false
+      buildDirectionsString()
+    else
+      cancelQueuedPeripheralRequests("id-poll")
+      for i = 1, #Controls.ID do
+        Controls.ID[i].IsDisabled = false
+      end
+      Controls.AssignToDevice.IsDisabled = false
+      -- Controls.Assign.IsDisabled = false
+      Controls.Assign.IsInvisible = false
+      Controls.IPMode.IsInvisible = false
+      Controls.ResetName.IsInvisible = false
+      Controls.PairWithIdDirections[2].IsInvisible , Controls.PairWithIdDontShowAdgain.IsInvisible = true, true 
+      buildDirectionsString()
+    end
+  end
+  
+  -- **Send ID mode command to a device**
+  function sendId(ip, name, t, mode)
+    queuePeripheralRequest({
+      Url = "https://" .. ip .. "/cgi-bin/id_mode?mode=" .. mode,
+      Timeout = 30,
+      Headers = {},
+      EventHandler = function(_, code, data)
+        if code == 200 then
+          Timer.CallAfter(function() downloadFromPeripherals(ip, name, t, deviceDiscoveryGeneration) end, 1)
+        end
+      end
+    }, "Download", "id-off")
+  end
+  
+  -- **Handle inventory model selection**
+  function handleInventoryModel()
+    local location = Controls.InventoryLocation.String
+    local model = Controls.InventoryModel.String
+    Controls.InventoryName.Choices = withEmptyChoice(getInventoryNames(location, model))
+    Controls.InventoryName.String = ""
+    Controls.AssignToDevice.Choices = model == "" and {""} or getDeviceNamesForModel(model)
+    Controls.AssignToDevice.String = ""
+    navigationCursorName = ""
+    lastSuccessfulInventoryName = ""
+    lastHandledInventoryName = ""
+    updateNavigationButtons()
+  end
+  
+  -- **Event Handlers**
+  
+  local function handleInventoryNameChanged()
+    local name = Controls.InventoryName.String
+    if name == lastHandledInventoryName then
+      updateNavigationButtons()
+      return
+    end
+    lastHandledInventoryName = name
+    Controls.InventoryName.Color = ""
+    if name ~= "" then
+      navigationCursorName = name
+      namecheckID = true 
+    else namecheckID = false 
+    end 
+    checkForReset ()
+    local model = string.upper(Controls.InventoryModel.String or "")
+    Controls.AssignToDevice.Choices = model == "" and {""} or getDeviceNamesForModel(model)
+    Controls.AssignToDevice.String = ""
+    if Controls.PairWithID.Boolean and name ~= "" then
+      Controls.AssignToDevice.Choices = { "" }
+      model = string.upper(Inventory.NameToModel[name] or "")
+      if model ~= "" then
+        if idModePreparedModel == model then
+          listenForIDMode(model)
+        elseif idModeClearingModel ~= model then
+          clearIDModeForModel(model)
+        end
+      end
+    elseif Controls.PairWithID.Boolean then
+      idPairingBusy = false
+      stopIDModeListener()
+    end
+    updateNavigationButtons()
+    buildDirectionsString()
+  end
+  
+  Controls.InventoryName.EventHandler = handleInventoryNameChanged
+  
+  Controls.InventoryLocation.EventHandler = function()
+    stopIDModeListener()
+    idPairingBusy = false
+    idModePreparedModel = nil
+    idModeClearingModel = nil
+    navigationCursorName = ""
+    lastSuccessfulInventoryName = ""
+    lastHandledInventoryName = ""
+    Controls.InventoryModel.String = ""
+    Controls.InventoryName.String = ""
+    Controls.InventoryName.Color = ""
+    Controls.AssignToDevice.String = ""
+    handleInventoryModel()
+    Controls.InventoryModel.Choices = withEmptyChoice(getInventoryModels(Controls.InventoryLocation.String))
+    modelcheckID = false
+    namecheckID = false
+    checkForReset()
+    buildDirectionsString()
+  end
+  
+  Controls.InventoryModel.EventHandler = function()
+    Controls.InventoryName.Color = ""
+    stopIDModeListener()
+    idPairingBusy = false
+    idModeClearingModel = nil
+    idModePreparedModel = nil
+    navigationCursorName = ""
+    lastSuccessfulInventoryName = ""
+    lastHandledInventoryName = ""
+    Controls.InventoryName.String = ""
+    Controls.AssignToDevice.String = ""
+    if Controls.InventoryModel.String ~= "" then 
+      modelcheckID = true 
+    else modelcheckID = false 
+    end 
+    checkForReset ()
+    handleInventoryModel()
+    if Controls.PairWithID.Boolean and Controls.InventoryModel.String ~= "" then
+      clearIDModeForModel(string.upper(Controls.InventoryModel.String))
+    end
+    buildDirectionsString()
+  end
+  
+  local function moveInventoryName(direction)
+    local names = getInventoryNames(Controls.InventoryLocation.String, Controls.InventoryModel.String)
+    if #names == 0 then return end
+    local current = Controls.InventoryName.String
+    if current == "" or not listContains(names, current) then
+      current = navigationCursorName
+    end
+    if current == "" or not listContains(names, current) then
+      current = lastSuccessfulInventoryName
+    end
+  
+    local index
+    for i, name in ipairs(names) do
+      if name == current then
+        index = i
+        break
+      end
+    end
+    local nextIndex
+    if index then
+      nextIndex = index + direction
+    else
+      nextIndex = direction > 0 and 1 or #names
+    end
+    if nextIndex < 1 or nextIndex > #names then return end
+  
+    Controls.InventoryName.String = names[nextIndex]
+    handleInventoryNameChanged()
+  end
+  
+  Controls.PrevDevice.EventHandler = function()
+    moveInventoryName(-1)
+  end
+  
+  Controls.NextDevice.EventHandler = function()
+    moveInventoryName(1)
+  end
+  
+  Controls.Device.EventHandler = function()
+    local device = Controls.Device.String
+    Controls.IP.String = DevicesAndIPs[device] or ""
+    if Peripherals[device] then
+      Controls.StaticOrAuto.String = Peripherals[device].interface.mode
+      Controls.Dtype.String = DeviceTypeLookup[device] or ""
+    elseif Cores[device] then
+      Controls.StaticOrAuto.String = Cores[device].Network and Cores[device].Network[1].mode or "N/A"
+    end
+  end
+  
+  Controls.Get.EventHandler = getDevices
+  Controls.DeviceModelFilter.EventHandler = function()
+    updateDeviceList(true)
+  end
+  
+  Controls.Reboot.EventHandler = function()
+    HttpClient.Download({
+      Url = "https://" .. Controls.IP.String .. "/cgi-bin/device-reboot",
+      Timeout = 30,
+      Headers = {},
+      EventHandler = function(_, code, data) DisplayPrint("Reboot response: " .. code) end
+    })
+  end
+  
+  Controls.DownloadLogfile.EventHandler = function()
+    local ip = Controls.IP.String
+    if ip ~= "" then
+      HttpClient.Download({
+        Url = "https://" .. ip .. "/cgi-bin/system_state",
+        Timeout = 30,
+        Headers = {},
+        EventHandler = function(_, code, data)
+          if code == 200 then
+            local file = io.open("media/log_" .. Controls.Device.String .. "_" .. os.date() .. ".qsyslog", "wb")
+            file:write(data)
+            file:close()
+            DisplayPrint("Log saved!")
+          else
+            DisplayPrint("Log download failed: " .. code)
+          end
+        end
+      })
+    end
+  end
+  
+  Controls.SetStatic.EventHandler = function()
+    setPeripheral(Controls.Device.String, Controls.Device.String, Controls.IP.String, netMask, Controls.NewGateway.String, "static")
+  end
+  
+  Controls.LastOctet.EventHandler = function()
+    Controls.LastOctet.Color = ""
+  end
+  
+  
+  Controls.SetDHCP.EventHandler = function()
+    setPeripheralToDHCP(Controls.Device.String)
+  end
+  
+  Controls.ScanIPs.EventHandler = function()
+    local base = broadcastRange:match("(%d+%.%d+%.%d+%.).+")
+    local cidr = getSubnetMaskCIDR(netMask)
+    local found = {}
+    for i = 1, 254 do
+      local ip = base .. i
+      local ping = Ping.New(ip)
+      ping:start(false)
+      ping:setPingInterval(5.0)
+      ping.EventHandler = function(resp)
+        if not found[resp.HostName] then
+          found[resp.HostName] = true
+          DisplayPrint("Found: " .. resp.HostName)
+        end
+      end
+    end
+  end
+  
+  Controls.AssignToDevice.EventHandler = function()
+    if Controls.AssignToDevice.String ~= "" then
+      peripheralcheckID = true
+    else 
+      peripheralcheckID = false
+    end
+    checkForReset()
+    buildDirectionsString()
+    local selectedDevice = Controls.AssignToDevice.String
+    if selectedDevice and DevicesAndIPs[selectedDevice] then
+      local deviceIP = DevicesAndIPs[selectedDevice]
+      local octets = {}
+      for octet in deviceIP:gmatch("%d+") do
+          table.insert(octets, octet)
+      end
+      if #octets >= 4 then
+          Controls.ThirdOctet.String = octets[3]
+          Controls.LastOctet.String = octets[4]
+      end
+    end
+  end
+  
+  Controls.IPMode.EventHandler = function()
+    Controls.IPMode.Legend = getIPMode()
+  end
+  
+  for i = 1, #Controls.ID do
+    Controls.ID[i].EventHandler = function()
+      local bool = Controls.ID[i].Boolean
+      local ip = Controls.DeviceIP[i].String
+      local name = Controls.DeviceName[i].String
+      local t = i
+      sendId(ip, name, t, idMode(bool))
+    end
+  end
+  
+  Controls.Assign.EventHandler = function()
+    applyAssign(Controls.AssignToDevice.String)
+    print("Assign button pressed by assign eventhandler")
+    buildDirectionsString()
+  end
+  
+  Controls.ResetName.EventHandler = function ()
+    local name = Controls.AssignToDevice.String
+    local ip = DevicesAndIPs[Controls.AssignToDevice.String]
+    local model = DeviceTypeLookup[name] or DeviceTypeLookup[Controls.InventoryName.String]
+    resetName(model, name, ip)
+    buildDirectionsString()
+  end 
+  
+  Controls.PairWithID.EventHandler = function ()
+    PairingMode(Controls.PairWithID.Boolean)
+  end 
+  
+  Controls.PairWithIdDontShowAdgain.EventHandler = hidePairIdWarning
+  
+  function buildDirectionsString()
+    local locationSelected = Controls.InventoryLocation.String ~= ""
+    local modelSelected = Controls.InventoryModel.String ~= ""
+    local nameSelected = Controls.InventoryName.String ~= ""
+    local peripheralSelected = Controls.AssignToDevice.String ~= ""
+    local function step(number, text, complete)
+      return number .. ". " .. text .. (complete and " ✓" or "")
+    end
+  
+    if Controls.PairWithID.Boolean then
+      local keepPairing = Controls.KeepPairWithID.Boolean
+      local keepLabel = keepPairing and "ON" or "OFF"
+      local directions = "MODE: PAIR BY ID  |  KEEP PAIRING: " .. keepLabel
+      if keepPairing then
+        directions = directions .. "\nAfter pairing, use Prev/Next to move through names."
+      else
+        directions = directions .. "\nKeep Pairing off stops after one successful pair."
+      end
+      directions = directions
+        .. "\n" .. step("1", "Select location", locationSelected)
+        .. "\n" .. step("2", "Select model", modelSelected)
+        .. "\n" .. step("3", "Select inventory name", nameSelected)
+        .. "\n4. Press ID on the intended peripheral to pair."
+      Controls.PairWithIdDirections[1].String = ""
+      Controls.PairWithIdDirections[2].String = directions
+      Controls.Assign.Legend = "Pair\nby ID"
+    else
+      local directions = "MODE: MANUAL PAIRING"
+        .. "\n" .. step("1", "Select location", locationSelected)
+        .. "\n" .. step("2", "Select model", modelSelected)
+        .. "\n" .. step("3", "Select inventory name", nameSelected)
+        .. "\n" .. step("4", "Select peripheral", peripheralSelected)
+        .. "\n5. Press Assign to pair, or Reset Name to restore factory name."
+      Controls.PairWithIdDirections[1].String = directions
+      Controls.PairWithIdDirections[2].String = ""
+  
+      if not locationSelected or not modelSelected or not nameSelected then
+        Controls.Assign.Legend = "Select Model\nand\nName"
+      elseif not peripheralSelected then
+        Controls.Assign.Legend = "Select\nPeripheral"
+      else
+        Controls.Assign.Legend = "Assign\nPeripheral"
+      end
+    end
+  end
+  
+  Controls.KeepPairWithID.EventHandler = buildDirectionsString
+  
+  -- Initial device discovery
+  getDevices()
+  PairingMode(false)
+  buildDirectionsString()
+end

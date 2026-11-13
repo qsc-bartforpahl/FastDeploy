@@ -1,0 +1,72 @@
+{
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "versionType",
+      "type": "pickString",
+      "description": "Version bump type",
+      "options": ["ver_dev", "ver_fix", "ver_min", "ver_maj", "ver_none"],
+      "default": "ver_dev"
+    }
+  ],
+  "tasks": [
+    {
+      "label": "plugin: preprocess",
+      "type": "shell",
+      "command": "plugincompile/compile_plugin.sh ${input:versionType}",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "shell": {
+          "executable": "C:\\Program Files\\Git\\bin\\bash.exe",
+          "args": ["-c"]
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "group": "build"
+      }
+    },
+    {
+      "label": "plugin: compile",
+      "type": "shell",
+      "command": "plugincompile\\PLUGCC.exe",
+      "args": ["${workspaceFolder}", "plugin.lua"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "group": "build"
+      }
+    },
+    {
+      "label": "plugin: deploy",
+      "type": "shell",
+      "command": "plugincompile\\copy_plugin.cmd",
+      "args": ["${workspaceFolder}\\..", "${workspaceFolderBasename}"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "group": "build"
+      }
+    },
+    {
+      "label": "Build Plugin",
+      "dependsOn": ["plugin: preprocess", "plugin: compile", "plugin: deploy"],
+      "dependsOrder": "sequence",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    }
+  ]
+}
