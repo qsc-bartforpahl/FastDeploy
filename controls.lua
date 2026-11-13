@@ -104,6 +104,15 @@ table.insert(ctrls, {
 })
 
 -- Inventory Selection
+table.insert(ctrls, {
+  Name = "InventoryLocation",
+  ControlType = "Text",
+  Constraint = "List",
+  UserPin = true,
+  PinStyle = "Input",
+  Count = 1
+})
+
 table.insert(ctrls, { 
   Name = "InventoryModel", 
   ControlType = "Text", 
@@ -117,6 +126,24 @@ table.insert(ctrls, {
   Name = "InventoryName", 
   ControlType = "Text", 
   Constraint = "List", 
+  UserPin = true,
+  PinStyle = "Input",
+  Count = 1
+})
+
+table.insert(ctrls, {
+  Name = "PrevDevice",
+  ControlType = "Button",
+  ButtonType = "Trigger",
+  UserPin = true,
+  PinStyle = "Input",
+  Count = 1
+})
+
+table.insert(ctrls, {
+  Name = "NextDevice",
+  ControlType = "Button",
+  ButtonType = "Trigger",
   UserPin = true,
   PinStyle = "Input",
   Count = 1
@@ -352,5 +379,4 @@ table.insert(ctrls, {
   PinStyle = "Input",
   Count = 1
 })  
-
 

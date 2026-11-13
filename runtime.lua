@@ -13,13 +13,17 @@ Peripherals = {}            -- Stores detailed peripheral configurations
 Cores = {}  
 tabDebugString = {}                -- Stores core device details
 Inventory = {
-  Models = {""},          -- List of inventory models
+  Locations = {""},
+  LocationsLookup = {},
+  Models = {},            -- List of inventory models
   ModelsLookup = {},      -- Quick lookup for models
-  Names = {""},           -- List of inventory names
+  Names = {},             -- List of inventory names
   NamesLookup = {},       -- Quick lookup for names
   ModelToName = {},       -- Mapping: model -> name
   NameToModel = {},       -- Mapping: name -> model
+  NameToLocation = {},    -- Mapping: name -> location
   ByModel = {},           -- Lookup: model -> list of names
+  ByLocation = {},        -- Mapping: location -> models and names
   ByModelLookup = {},     -- Tracks models in ByModel
   Types = {               -- Supported device types
     ["Network Microphone"] = true, ["Camera"] = true, ["Network Loudspeaker"] = true,
@@ -34,6 +38,18 @@ inventoryTimer = Timer.New() -- Timer for periodic inventory updates
 RefreshTimer = Timer.New()
 local idPairingGeneration = 0
 local idPairingBusy = false
+local idModePreparedModel = nil
+local idModeClearingModel = nil
+local navigationCursorName = ""
+local lastSuccessfulInventoryName = ""
+local lastHandledInventoryName = ""
+local deviceDiscoveryGeneration = 0
+local discoveryInProgress = false
+local discoveryRefreshRequested = false
+local activeIDPollCycle = nil
+local peripheralRequestQueue = {}
+local peripheralRequestsInFlight = 0
+local MAX_CONCURRENT_PERIPHERAL_REQUESTS = 4
 -- Network globals
 broadcastRange = ""         -- Broadcast address for the network
 netMask = ""          -- Subnet mask for the network
@@ -44,6 +60,7 @@ DebugSetting = Properties["Debug Print"].Value
 -- Set design name on startup
 Controls.LocalDesignName.String = Design.GetStatus().DesignName
 Controls.AssignToDevice.String = ""
+Controls.InventoryLocation.Color = ""
 Controls.InventoryModel.Color = ""
 Controls.InventoryName.Color = ""
 -- Initialize device controls to a cleared state
@@ -54,6 +71,67 @@ for i = 1, #Controls.DeviceModel do
   Controls.DeviceIP[i].String = ""
 end
 Controls.Assign.Legend = "Assign\nto\nPeripheral" 
+
+local function sortNames(values)
+  table.sort(values, function(a, b)
+    local lowerA, lowerB = string.lower(a), string.lower(b)
+    if lowerA == lowerB then return a < b end
+    return lowerA < lowerB
+  end)
+end
+
+local function appendUnique(values, lookup, value)
+  if value and value ~= "" and not lookup[value] then
+    lookup[value] = true
+    table.insert(values, value)
+  end
+end
+
+local function withEmptyChoice(values)
+  local choices = {""}
+  for _, value in ipairs(values) do
+    table.insert(choices, value)
+  end
+  return choices
+end
+
+local function pumpPeripheralRequestQueue()
+  while peripheralRequestsInFlight < MAX_CONCURRENT_PERIPHERAL_REQUESTS
+    and #peripheralRequestQueue > 0 do
+    local queued = table.remove(peripheralRequestQueue, 1)
+    peripheralRequestsInFlight = peripheralRequestsInFlight + 1
+    local eventHandler = queued.request.EventHandler
+    queued.request.EventHandler = function(...)
+      peripheralRequestsInFlight = peripheralRequestsInFlight - 1
+      if eventHandler then eventHandler(...) end
+      pumpPeripheralRequestQueue()
+    end
+    queued.send(queued.request)
+  end
+end
+
+local function queuePeripheralRequest(request, method, category, onCancel)
+  local send = method == "Upload" and HttpClient.Upload or HttpClient.Download
+  table.insert(peripheralRequestQueue, {
+    request = request,
+    send = send,
+    category = category,
+    onCancel = onCancel
+  })
+  pumpPeripheralRequestQueue()
+end
+
+local function cancelQueuedPeripheralRequests(category)
+  local retained = {}
+  for _, queued in ipairs(peripheralRequestQueue) do
+    if queued.category == category then
+      if queued.onCancel then queued.onCancel() end
+    else
+      table.insert(retained, queued)
+    end
+  end
+  peripheralRequestQueue = retained
+end
 
 -- Debug Print function to display in UCI 
 function DisplayPrint(str)
@@ -201,45 +279,163 @@ end
 
 
 -- **Update inventory from design data and detect status changes**
+local function getInventoryModels(location)
+  local locationData = Inventory.ByLocation[location]
+  return locationData and locationData.Models or {}
+end
+
+local function getInventoryNames(location, model)
+  local locationData = Inventory.ByLocation[location]
+  if not locationData then return {} end
+  return locationData.ByModel[string.upper(model or "")] or {}
+end
+
+local function listContains(values, value)
+  for _, candidate in ipairs(values) do
+    if candidate == value then return true end
+  end
+  return false
+end
+
+local function getDeviceNamesForModel(model)
+  local names = {}
+  local modelKey = string.upper(model or "")
+  for name, deviceModel in pairs(DeviceTypeLookup) do
+    if string.upper(deviceModel or "") == modelKey and DevicesAndIPs[name] then
+      table.insert(names, name)
+    end
+  end
+  sortNames(names)
+  return withEmptyChoice(names)
+end
+
+local function updateNavigationButtons()
+  local names = getInventoryNames(Controls.InventoryLocation.String, Controls.InventoryModel.String)
+  local cursor = Controls.InventoryName.String
+  if cursor == "" or not listContains(names, cursor) then
+    cursor = navigationCursorName
+  end
+  if cursor == "" or not listContains(names, cursor) then
+    cursor = lastSuccessfulInventoryName
+  end
+
+  local index
+  for i, name in ipairs(names) do
+    if name == cursor then
+      index = i
+      break
+    end
+  end
+
+  local hasNames = #names > 0
+  Controls.PrevDevice.IsDisabled = not hasNames or (index ~= nil and index <= 1)
+  Controls.NextDevice.IsDisabled = not hasNames or (index ~= nil and index >= #names)
+end
+
+local function refreshInventorySelectors()
+  Controls.InventoryLocation.Choices = withEmptyChoice(Inventory.Locations)
+  local location = Controls.InventoryLocation.String
+  if location ~= "" and not Inventory.ByLocation[location] then
+    location = ""
+    Controls.InventoryLocation.String = ""
+  end
+
+  local models = getInventoryModels(location)
+  Controls.InventoryModel.Choices = withEmptyChoice(models)
+  local model = Controls.InventoryModel.String
+  if model ~= "" and not listContains(models, model) then
+    model = ""
+    Controls.InventoryModel.String = ""
+  end
+
+  local names = getInventoryNames(location, model)
+  Controls.InventoryName.Choices = withEmptyChoice(names)
+  if Controls.InventoryName.String ~= "" and not listContains(names, Controls.InventoryName.String) then
+    Controls.InventoryName.String = ""
+  end
+
+  Controls.AssignToDevice.Choices = model == "" and {""} or getDeviceNamesForModel(model)
+  if Controls.AssignToDevice.String ~= ""
+    and not listContains(Controls.AssignToDevice.Choices, Controls.AssignToDevice.String) then
+    Controls.AssignToDevice.String = ""
+  end
+  updateNavigationButtons()
+end
+
 function updateInventory()
-  if refresh == true then
-    getDevices()
-  end
   local statusChanged = false
-  
-  for _, v in pairs(Design.GetInventory()) do
-    local model, name, code = v.Model, v.Name, v.Status.Code
-    
-    if LastStatusCodes[name] and LastStatusCodes[name] ~= code then
+  local currentStatuses = {}
+  local nextInventory = {
+    Locations = {},
+    LocationsLookup = {},
+    Models = {},
+    ModelsLookup = {},
+    Names = {},
+    NamesLookup = {},
+    ModelToName = {},
+    NameToModel = {},
+    NameToLocation = {},
+    ByModel = {},
+    ByLocation = {},
+    ByModelLookup = {},
+    Types = Inventory.Types
+  }
+
+  for _, item in pairs(Design.GetInventory()) do
+    local model = item.Model
+    local name = item.Name
+    local code = item.Status and item.Status.Code
+    if name and code ~= nil then
+      currentStatuses[name] = code
+      if LastStatusCodes[name] ~= nil and LastStatusCodes[name] ~= code then
         statusChanged = true
+      end
     end
-    LastStatusCodes[name] = code
-    
-    if Inventory.Types[v.Type] or v.Type == "" then
-      if not Inventory.ModelsLookup[model] then
-        table.insert(Inventory.Models, model)
-        Inventory.ModelsLookup[model] = true
+
+    if name and model and (Inventory.Types[item.Type] or item.Type == "") then
+      local location = item.Location
+      if type(location) == "string" then
+        location = location:match("^%s*(.-)%s*$")
       end
-      if not Inventory.NamesLookup[name] then
-        table.insert(Inventory.Names, name)
-        Inventory.NamesLookup[name] = true
-        Inventory.NameToModel[name] = model
-        if not Inventory.ByModel[model] then
-          Inventory.ByModel[model] = {}
-        end   
-        if not Inventory.ByModelLookup[model] then
-          table.insert(Inventory.ByModel[model], name)
-          Inventory.ByModelLookup[model] = true
-        else 
-          table.insert(Inventory.ByModel[model], name)
-        end
+      if type(location) ~= "string" or location == "" then
+        location = "Unassigned"
       end
-      Controls.InventoryModel.Choices = Inventory.Models
+      local modelKey = string.upper(model)
+      appendUnique(nextInventory.Locations, nextInventory.LocationsLookup, location)
+      appendUnique(nextInventory.Models, nextInventory.ModelsLookup, model)
+      appendUnique(nextInventory.Names, nextInventory.NamesLookup, name)
+      nextInventory.ModelToName[model] = nextInventory.ModelToName[model] or name
+      nextInventory.NameToModel[name] = model
+      nextInventory.NameToLocation[name] = location
+      nextInventory.ByModel[modelKey] = nextInventory.ByModel[modelKey] or {}
+      table.insert(nextInventory.ByModel[modelKey], name)
+      nextInventory.ByLocation[location] = nextInventory.ByLocation[location] or {
+        Models = {},
+        ModelLookup = {},
+        ByModel = {}
+      }
+      local locationData = nextInventory.ByLocation[location]
+      appendUnique(locationData.Models, locationData.ModelLookup, model)
+      locationData.ByModel[modelKey] = locationData.ByModel[modelKey] or {}
+      table.insert(locationData.ByModel[modelKey], name)
     end
   end
-  
-  if statusChanged then
-      getDevices()
+
+  for _, locationData in pairs(nextInventory.ByLocation) do
+    sortNames(locationData.Models)
+    for _, names in pairs(locationData.ByModel) do sortNames(names) end
+  end
+  for _, names in pairs(nextInventory.ByModel) do sortNames(names) end
+  sortNames(nextInventory.Locations)
+  sortNames(nextInventory.Models)
+  sortNames(nextInventory.Names)
+  nextInventory.Types = Inventory.Types
+  Inventory = nextInventory
+  LastStatusCodes = currentStatuses
+  refreshInventorySelectors()
+
+  if refresh == true or statusChanged then
+    getDevices()
   end
 end
 -- Start inventory update timer (runs every 5 seconds)
@@ -249,15 +445,16 @@ updateInventory()
 
 
 -- **Download configuration from a peripheral device**
-function downloadFromPeripherals(ip, name, t)
+function downloadFromPeripherals(ip, name, t, generation)
   DebugFunctionEntry("downloadFromPeripherals", ip, name, t)
   DebugPrint("Downloading configuration from " .. name .. " at " .. ip, "tx")
   
-  HttpClient.Download({
+  queuePeripheralRequest({
     Url = "https://" .. ip .. "/cgi-bin/status_xml",
     Timeout = 30,
     Headers = {},
     EventHandler = function(_, code, data)
+      if generation and generation ~= deviceDiscoveryGeneration then return end
       DebugNetworkResponse("https://" .. ip .. "/cgi-bin/status_xml", code, data)
       if code == 200 then
         DebugPrint("Received configuration from " .. name, "rx")
@@ -285,18 +482,18 @@ function downloadFromPeripherals(ip, name, t)
         DebugPrint("Failed to download configuration from " .. name .. ": " .. code, "rx")
       end
     end
-  })
+  }, "Download", "device-detail")
   DebugFunctionExit("downloadFromPeripherals")
 end
 
 -- **Map models to device names for assignment choices**
 function modelHandling(model, name)
-  if not model then
+  if not model or model == "" or not name or name == "" then
     return
   end
   model = string.upper(model)
   if not tabModeltoName[model] then
-    tabModeltoName[model] = {""}
+    tabModeltoName[model] = {}
   end
   if not tabModelNameLookup[name] then
     table.insert(tabModeltoName[model], name)
@@ -322,37 +519,48 @@ function parseDevices(headers, code, data)
 
   for _, elem in pairs(decoded) do
     if elem.type ~= "core" then
-      if refreshname and  elem.name == string.lower(refreshname) then
-        refresh = false
-        DebugPrint("Refresh stopped for "..elem.name, "function")
+      if not elem.name or not elem.lan_a_ip then
+        DisplayPrint("Skipping discovered peripheral without name or LAN A IP")
+      else
+        if refreshname and elem.name == string.lower(refreshname) then
+          refresh = false
+          DebugPrint("Refresh stopped for " .. elem.name, "function")
+        end
+        DebugPrint("Found device: " .. elem.name .. " with IP: " .. elem.lan_a_ip, "rx")
+        table.insert(Devices, elem.name)
+        table.insert(IPs, elem.lan_a_ip)
+        table.insert(DeviceTypes, elem.part_number)
+        DevicesAndIPs[elem.name] = elem.lan_a_ip
+        DeviceTypeLookup[elem.name] = elem.part_number or ""
+        Peripherals[elem.name] = {ip = elem.lan_a_ip}
+        modelHandling(elem.part_number, elem.name)
+        DevicesLookup[elem.name] = t
+        if t <= #Controls.DeviceModel then
+          downloadFromPeripherals(elem.lan_a_ip, elem.name, t, deviceDiscoveryGeneration)
+          Controls.DeviceModel[t].String = elem.part_number or ""
+          Controls.DeviceName[t].String = elem.name
+          Controls.DeviceIP[t].String = elem.lan_a_ip
+          Controls.DeviceModel[t].IsInvisible = false
+          Controls.DeviceName[t].IsInvisible = false
+          Controls.DeviceIP[t].IsInvisible = false
+          Controls.DesignOnDevice[t].IsInvisible = false
+          Controls.ID[t].IsInvisible = false
+          Controls.IDPairing[t].IsInvisible = false
+          Controls.PeripheralInfo[t].IsInvisible = false
+        end
+        t = t + 1
       end
-      DebugPrint("Found device: " .. elem.name .. " with IP: " .. elem.lan_a_ip, "rx")
-      table.insert(Devices, elem.name)
-      table.insert(IPs, elem.lan_a_ip)
-      table.insert(DeviceTypes, elem.part_number)
-      DevicesAndIPs[elem.name] = elem.lan_a_ip
-      DeviceTypeLookup[elem.name] = elem.part_number
-      Peripherals[elem.name] = { ip = elem.lan_a_ip }
-      modelHandling(elem.part_number, elem.name)
-      DevicesLookup[Devices[t]] = t
-      downloadFromPeripherals(elem.lan_a_ip, elem.name, t)
-      Controls.DeviceModel[t].String = elem.part_number or ""
-      Controls.DeviceName[t].String = elem.name or ""
-      Controls.DeviceIP[t].String = elem.lan_a_ip or ""
-      Controls.DeviceModel[t].IsInvisible = false
-      Controls.DeviceName[t].IsInvisible = false
-      Controls.DeviceIP[t].IsInvisible = false
-      Controls.DesignOnDevice[t].IsInvisible = false
-      Controls.ID[t].IsInvisible = false
-      Controls.IDPairing[t].IsInvisible = false
-      Controls.PeripheralInfo[t].IsInvisible = false
-      t = t + 1
     else
       DebugPrint("Found core device: " .. elem.name, "rx")
       Cores[elem.name] = elem
     end
   end
-  Controls.Device.Choices = Devices
+  local deviceChoices = {}
+  for _, name in ipairs(Devices) do table.insert(deviceChoices, name) end
+  sortNames(deviceChoices)
+  Controls.Device.Choices = deviceChoices
+  for _, names in pairs(tabModeltoName) do sortNames(names) end
+  refreshInventorySelectors()
 end
 
 -- **Get IP mode (Static or DHCP) and update control states**
@@ -381,6 +589,14 @@ end
 
 -- **Fetch and display all devices on the network**
 function getDevices()
+  if discoveryInProgress then
+    discoveryRefreshRequested = true
+    return
+  end
+  discoveryInProgress = true
+  discoveryRefreshRequested = false
+  deviceDiscoveryGeneration = deviceDiscoveryGeneration + 1
+  cancelQueuedPeripheralRequests("device-detail")
   checkForReset ()
   Controls.AssignToDevice.String = ""
   t = 1
@@ -402,6 +618,7 @@ function getDevices()
   end
   Controls.IPMode.Legend = getIPMode()
   Devices, IPs, DeviceTypes, DevicesAndIPs, DeviceTypeLookup, tabModeltoName, tabModelNameLookup = {}, {}, {}, {}, {}, {}, {}
+  DevicesLookup, Peripherals, Cores = {}, {}, {}
 
   local coreIP = ""
   for _, item in ipairs(Network.Interfaces()) do
@@ -416,7 +633,14 @@ function getDevices()
     Url = "https://" .. coreIP .. "/debug/remote_support/network_debug/discovered_devices",
     Timeout = 30,
     Headers = {},
-    EventHandler = parseDevices
+    EventHandler = function(headers, code, data)
+      parseDevices(headers, code, data)
+      discoveryInProgress = false
+      if discoveryRefreshRequested then
+        discoveryRefreshRequested = false
+        Timer.CallAfter(getDevices, 1)
+      end
+    end
   })
   populateNetworkInterfaceControls()
 end
@@ -442,16 +666,16 @@ function uploadPeripheralNetworkSettings(originalIP, hostname, mode, ip, netmask
     <interface><name>LAN A</name><mode>%s</mode><address>%s</address><netmask>%s</netmask><default_route>%s</default_route></interface>
   </network_configuration>]], hostname, mode, ip, netmask, defaultRoute)
     DebugNetworkRequest(legacyUrl, "POST", payload)
-    HttpClient.Upload({
+    queuePeripheralRequest({
       Url = legacyUrl,
       Data = payload,
       Method = "POST",
       Timeout = 30,
       Headers = { ["Content-Type"] = "text/xml" },
       EventHandler = handler
-    })
+    }, "Upload", "network-settings")
   end
-  HttpClient.Download({
+  queuePeripheralRequest({
     Url = apiUrl,
     Timeout = 30,
     Headers = {},
@@ -490,7 +714,7 @@ function uploadPeripheralNetworkSettings(originalIP, hostname, mode, ip, netmask
         return
       end
       DebugNetworkRequest(url, "POST", payload)
-      HttpClient.Upload({
+      queuePeripheralRequest({
         Url = url,
         Data = payload,
         Method = "POST",
@@ -503,9 +727,9 @@ function uploadPeripheralNetworkSettings(originalIP, hostname, mode, ip, netmask
             handler(headers, uploadCode, uploadData)
           end
         end
-      })
+      }, "Upload", "network-settings")
     end
-  })
+  }, "Download", "network-settings")
 end
 
 function setPeripheralToDHCP(name)
@@ -533,6 +757,10 @@ function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode, onSucc
       DebugNetworkResponse("https://" .. originalIP, code, data)
       if code == 200 then
         DebugPrint("Successfully configured " .. newName, "rx")
+        if inventoryName ~= "" and Inventory.NameToModel[inventoryName] then
+          navigationCursorName = inventoryName
+          lastSuccessfulInventoryName = inventoryName
+        end
         if inventoryModel ~= "" and inventoryName == newName
           and Controls.InventoryModel.String == inventoryModel
           and Controls.InventoryName.String == inventoryName
@@ -565,6 +793,7 @@ function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode, onSucc
           for i, name in ipairs(names) do
             if name == oldName then names[i] = newName end
           end
+          sortNames(names)
         end
         if oldName ~= newName then
           Peripherals[oldName], DevicesAndIPs[oldName], DeviceTypeLookup[oldName], DevicesLookup[oldName] = nil, nil, nil, nil
@@ -574,6 +803,7 @@ function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode, onSucc
         end
         DebugPrint("Setting assign to device choices to empty", "function")
         Controls.AssignToDevice.Choices = {}
+        updateNavigationButtons()
         if onSuccess then onSuccess() end
       else
         DebugPrint("Failed to configure " .. newName .. ": " .. tostring(data), "rx")
@@ -777,24 +1007,41 @@ end
 function stopIDModeListener()
   idPairingGeneration = idPairingGeneration + 1
   RefreshTimer:Stop()
+  activeIDPollCycle = nil
+  cancelQueuedPeripheralRequests("id-poll")
 end
 
 function clearIDModeForModel(model)
+  local modelKey = string.upper(model or "")
+  if idPairingBusy and idModeClearingModel == modelKey then return end
   stopIDModeListener()
   local generation = idPairingGeneration
+  idModePreparedModel = nil
+  idModeClearingModel = modelKey
   local targets = {}
   for name, deviceModel in pairs(DeviceTypeLookup) do
-    if string.upper(deviceModel) == string.upper(model) and DevicesAndIPs[name] then
+    if string.upper(deviceModel or "") == modelKey and DevicesAndIPs[name] then
       targets[#targets + 1] = { name = name, ip = DevicesAndIPs[name] }
     end
   end
+  table.sort(targets, function(a, b)
+    local lowerA, lowerB = string.lower(a.name), string.lower(b.name)
+    if lowerA == lowerB then return a.name < b.name end
+    return lowerA < lowerB
+  end)
   local pending, failed = #targets, false
   idPairingBusy = pending > 0
   local function finish()
-    idPairingBusy = false
-    if not failed and Controls.PairWithID.Boolean then
-      local selectedModel = Inventory.NameToModel[Controls.InventoryName.String]
-      if selectedModel then listenForIDMode(string.upper(selectedModel)) end
+    if generation == idPairingGeneration then
+      idPairingBusy = false
+      idModeClearingModel = nil
+      if not failed and Controls.PairWithID.Boolean
+        and string.upper(Controls.InventoryModel.String or "") == modelKey then
+        idModePreparedModel = modelKey
+        if Controls.InventoryName.String ~= "" then listenForIDMode(modelKey) end
+      elseif failed then
+        idModePreparedModel = nil
+      end
     end
   end
   if pending == 0 then
@@ -802,12 +1049,11 @@ function clearIDModeForModel(model)
     return
   end
   for _, target in ipairs(targets) do
-    HttpClient.Download({
+    queuePeripheralRequest({
       Url = "https://" .. target.ip .. "/cgi-bin/id_mode?mode=off",
       Timeout = 30,
       Headers = {},
       EventHandler = function(_, code, data)
-        if generation ~= idPairingGeneration then return end
         if code ~= 200 then
           failed = true
           DisplayPrint("Failed to turn off ID mode for " .. target.name .. ": HTTP " .. tostring(code) .. " " .. tostring(data))
@@ -815,7 +1061,7 @@ function clearIDModeForModel(model)
         pending = pending - 1
         if pending == 0 then finish() end
       end
-    })
+    }, "Download", "id-off")
   end
 end
 
@@ -824,24 +1070,43 @@ end
 function listenForIDMode(model)
   if idPairingBusy then return end
   stopIDModeListener()
-  if not Controls.PairWithID.Boolean or Controls.InventoryName.String == "" then return end
+  local modelKey = string.upper(model or "")
+  if not Controls.PairWithID.Boolean or Controls.InventoryName.String == ""
+    or string.upper(Controls.InventoryModel.String or "") ~= modelKey then return end
   local generation = idPairingGeneration
   local inventoryName = Controls.InventoryName.String
-  DebugPrint("Starting ID mode listener for model: " .. model, "function")
+  DebugPrint("Starting ID mode listener for model: " .. modelKey, "function")
+  local function finishPollRequest(cycle)
+    if cycle.remaining <= 0 then return end
+    cycle.remaining = cycle.remaining - 1
+    if cycle.remaining == 0 and activeIDPollCycle == cycle then
+      activeIDPollCycle = nil
+    end
+  end
   RefreshTimer.EventHandler = function()
     if generation ~= idPairingGeneration or idPairingBusy or not Controls.PairWithID.Boolean then return end
-    for _, name in pairs(tabModeltoName[model] or {}) do
-      if name ~= "" and DevicesAndIPs[name] then
+    if activeIDPollCycle then return end
+    local candidates = tabModeltoName[modelKey] or {}
+    local cycle = {remaining = 0}
+    for _, name in ipairs(candidates) do
+      if DevicesAndIPs[name] then cycle.remaining = cycle.remaining + 1 end
+    end
+    if cycle.remaining == 0 then return end
+    activeIDPollCycle = cycle
+    for _, name in ipairs(candidates) do
+      if DevicesAndIPs[name] then
         local ip = DevicesAndIPs[name]
         DebugPrint("Checking ID mode for device: " .. name, "tx")
-        HttpClient.Download({
+        queuePeripheralRequest({
           Url = "https://" .. ip .. "/cgi-bin/status_xml",
           Timeout = 30,
           Headers = {},
           EventHandler = function(_, code, data)
-            if generation ~= idPairingGeneration or idPairingBusy
-              or not Controls.PairWithID.Boolean or Controls.InventoryName.String ~= inventoryName then return end
-            if code == 200 then
+            local selectionIsCurrent = generation == idPairingGeneration
+              and not idPairingBusy and Controls.PairWithID.Boolean
+              and Controls.InventoryName.String == inventoryName
+              and string.upper(Controls.InventoryModel.String or "") == modelKey
+            if selectionIsCurrent and code == 200 then
               local device = name
               local id = data:match("<id_mode>(.-)</id_mode>") or "N/A"
               if id == "on" then
@@ -850,7 +1115,7 @@ function listenForIDMode(model)
                 idPairingBusy = true
                 applyAssign(device)
                 DebugPrint("Turning off ID mode for device: " .. device, "tx")
-                HttpClient.Download({
+                queuePeripheralRequest({
                   Url = "https://" .. ip .. "/cgi-bin/id_mode?mode=off",
                   Timeout = 30,
                   Headers = {},
@@ -861,11 +1126,12 @@ function listenForIDMode(model)
                       DebugPrint("Failed to turn off ID mode: " .. code, "rx")
                     end
                   end
-                })
+                }, "Download", "id-off")
               end
             end
+            finishPollRequest(cycle)
           end
-        })
+        }, "Download", "id-poll", function() finishPollRequest(cycle) end)
       end
     end
   end
@@ -888,6 +1154,8 @@ function PairingMode(b)
 
   stopIDModeListener()
   idPairingBusy = false
+  idModePreparedModel = nil
+  idModeClearingModel = nil
   Controls.PairWithID.Boolean = b
   if b then
     hidePairIdWarning ()
@@ -895,6 +1163,11 @@ function PairingMode(b)
     Controls.InventoryName.String = ""
     Controls.InventoryModel.String = ""
     Controls.InventoryName.Color = ""
+    navigationCursorName = ""
+    lastSuccessfulInventoryName = ""
+    Controls.InventoryModel.Choices = withEmptyChoice(getInventoryModels(Controls.InventoryLocation.String))
+    Controls.InventoryName.Choices = {""}
+    lastHandledInventoryName = ""
     Controls.AssignToDevice.String = ""
     Controls.AssignToDevice.IsDisabled = true
     Controls.Assign.IsInvisible = true
@@ -907,26 +1180,15 @@ function PairingMode(b)
     Controls.IPMode.Legend = getIPMode()
     for i = 1, #Controls.ID do
       Controls.ID[i].IsDisabled = true
-      if Controls.DeviceName[i].String ~= "" then
-        local ip = Controls.DeviceIP[i].String
-        local name = Controls.DeviceName[i].String
-        local t = i
-        print("setting id mode to off for " .. name)
-        HttpClient.Download({
-          Url = "https://" .. ip .. "/cgi-bin/id_mode?mode=off",
-          Timeout = 30,
-          Headers = {},
-          EventHandler = function(_, code, data)
-            Timer.CallAfter(function() downloadFromPeripherals(ip, name, t) end, 1)
-          end
-        })
-      end
     end
+    Controls.NextDevice.IsDisabled = true
+    Controls.PrevDevice.IsDisabled = true
     modelcheckID = false
     namecheckID = false
     peripheralcheckID = false
     buildDirectionsString()
   else
+    cancelQueuedPeripheralRequests("id-poll")
     for i = 1, #Controls.ID do
       Controls.ID[i].IsDisabled = false
     end
@@ -942,84 +1204,150 @@ end
 
 -- **Send ID mode command to a device**
 function sendId(ip, name, t, mode)
-  HttpClient.Download({
+  queuePeripheralRequest({
     Url = "https://" .. ip .. "/cgi-bin/id_mode?mode=" .. mode,
     Timeout = 30,
     Headers = {},
     EventHandler = function(_, code, data)
       if code == 200 then
-        Timer.CallAfter(function() downloadFromPeripherals(ip, name, t) end, 1)
+        Timer.CallAfter(function() downloadFromPeripherals(ip, name, t, deviceDiscoveryGeneration) end, 1)
       end
     end
-  })
+  }, "Download", "id-off")
 end
 
 -- **Handle inventory model selection**
 function handleInventoryModel()
+  local location = Controls.InventoryLocation.String
   local model = Controls.InventoryModel.String
-  if model == "" then
-    Controls.InventoryModel.Choices = Inventory.Models
-    Controls.InventoryName.Choices = Inventory.Names
-    Controls.AssignToDevice.Choices = { "" }
-    Controls.AssignToDevice.String = ""
-  else
-    Controls.InventoryName.Choices = Inventory.ByModel[model] or { "" }
-    Controls.InventoryName.String = Inventory.ByModel[model] and Inventory.ByModel[model][1] or ""
-  end
+  Controls.InventoryName.Choices = withEmptyChoice(getInventoryNames(location, model))
   Controls.InventoryName.String = ""
-  Controls.AssignToDevice.Choices = {}
+  Controls.AssignToDevice.Choices = model == "" and {""} or getDeviceNamesForModel(model)
   Controls.AssignToDevice.String = ""
+  navigationCursorName = ""
+  lastSuccessfulInventoryName = ""
+  lastHandledInventoryName = ""
+  updateNavigationButtons()
 end
 
 -- **Event Handlers**
 
-Controls.InventoryName.EventHandler = function()
+local function handleInventoryNameChanged()
+  local name = Controls.InventoryName.String
+  if name == lastHandledInventoryName then
+    updateNavigationButtons()
+    return
+  end
+  lastHandledInventoryName = name
   Controls.InventoryName.Color = ""
-  if Controls.InventoryName.String ~= "" then 
+  if name ~= "" then
+    navigationCursorName = name
     namecheckID = true 
   else namecheckID = false 
   end 
   checkForReset ()
-  local name = Controls.InventoryName.String
-  if name == "" then
-    Controls.InventoryModel.Choices = Inventory.Models
-    Controls.InventoryName.Choices = Inventory.Names
-    Controls.AssignToDevice.Choices = { "" }
-  else
-    local model = string.upper(Inventory.NameToModel[name])
-    Controls.AssignToDevice.Choices = tabModeltoName[model] or { "" }
-  end
+  local model = string.upper(Controls.InventoryModel.String or "")
+  Controls.AssignToDevice.Choices = model == "" and {""} or getDeviceNamesForModel(model)
+  Controls.AssignToDevice.String = ""
   if Controls.PairWithID.Boolean and name ~= "" then
     Controls.AssignToDevice.Choices = { "" }
-    local model = string.upper(Inventory.NameToModel[name])
-    listenForIDMode(model)
-    print("listenForIDMode called from inventoryname")
-  elseif Controls.PairWithID.Boolean and not idPairingBusy then
+    model = string.upper(Inventory.NameToModel[name] or "")
+    if model ~= "" then
+      if idModePreparedModel == model then
+        listenForIDMode(model)
+      elseif idModeClearingModel ~= model then
+        clearIDModeForModel(model)
+      end
+    end
+  elseif Controls.PairWithID.Boolean then
+    idPairingBusy = false
     stopIDModeListener()
   end
+  updateNavigationButtons()
+  buildDirectionsString()
+end
+
+Controls.InventoryName.EventHandler = handleInventoryNameChanged
+
+Controls.InventoryLocation.EventHandler = function()
+  stopIDModeListener()
+  idPairingBusy = false
+  idModePreparedModel = nil
+  idModeClearingModel = nil
+  navigationCursorName = ""
+  lastSuccessfulInventoryName = ""
+  lastHandledInventoryName = ""
+  Controls.InventoryModel.String = ""
+  Controls.InventoryName.String = ""
+  Controls.InventoryName.Color = ""
+  Controls.AssignToDevice.String = ""
+  handleInventoryModel()
+  Controls.InventoryModel.Choices = withEmptyChoice(getInventoryModels(Controls.InventoryLocation.String))
+  modelcheckID = false
+  namecheckID = false
+  checkForReset()
   buildDirectionsString()
 end
 
 Controls.InventoryModel.EventHandler = function()
   Controls.InventoryName.Color = ""
-  if not idPairingBusy then stopIDModeListener() end
+  stopIDModeListener()
+  idPairingBusy = false
+  idModeClearingModel = nil
+  idModePreparedModel = nil
+  navigationCursorName = ""
+  lastSuccessfulInventoryName = ""
+  lastHandledInventoryName = ""
+  Controls.InventoryName.String = ""
+  Controls.AssignToDevice.String = ""
   if Controls.InventoryModel.String ~= "" then 
     modelcheckID = true 
   else modelcheckID = false 
   end 
   checkForReset ()
-  if Controls.PairWithID.Boolean then
-    Controls.InventoryName.String = ""
-    Controls.AssignToDevice.String = ""
-    Controls.AssignToDevice.Choices = { "" }
-    -- local model = Controls.InventoryModel.String
-    -- if model ~= "" then
-    --   listenForIDMode(string.upper(model))
-    --   print("listenForIDMode called from inventorymodel")
-    -- end
-  end
   handleInventoryModel()
+  if Controls.PairWithID.Boolean and Controls.InventoryModel.String ~= "" then
+    clearIDModeForModel(string.upper(Controls.InventoryModel.String))
+  end
   buildDirectionsString()
+end
+
+local function moveInventoryName(direction)
+  local names = getInventoryNames(Controls.InventoryLocation.String, Controls.InventoryModel.String)
+  if #names == 0 then return end
+  local current = Controls.InventoryName.String
+  if current == "" or not listContains(names, current) then
+    current = navigationCursorName
+  end
+  if current == "" or not listContains(names, current) then
+    current = lastSuccessfulInventoryName
+  end
+
+  local index
+  for i, name in ipairs(names) do
+    if name == current then
+      index = i
+      break
+    end
+  end
+  local nextIndex
+  if index then
+    nextIndex = index + direction
+  else
+    nextIndex = direction > 0 and 1 or #names
+  end
+  if nextIndex < 1 or nextIndex > #names then return end
+
+  Controls.InventoryName.String = names[nextIndex]
+  handleInventoryNameChanged()
+end
+
+Controls.PrevDevice.EventHandler = function()
+  moveInventoryName(-1)
+end
+
+Controls.NextDevice.EventHandler = function()
+  moveInventoryName(1)
 end
 
 Controls.Device.EventHandler = function()

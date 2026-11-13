@@ -29,10 +29,19 @@ The plugin contains three pages:
 
 1. Drag the plugin into your design
 2. Use the "Get" button to discover devices on the network
-3. Select an inventory model and name
-4. Select a device to assign the inventory item to
-5. Optionally configure IP settings if using static IP
-6. Press "Assign" to complete the pairing
+3. Select an inventory location, model, and name
+4. Use **Prev Device** / **Next Device** to step through the sorted inventory
+   names without scrolling the dropdown
+5. Select an online peripheral and assign the inventory item
+6. Optionally configure IP settings if using static IP
+7. Press "Assign" to complete the pairing
+
+The location selector filters Designer inventory items. Unadopted network
+peripherals do not have a Designer location yet, so the selected model filters
+the online peripheral candidates and ID-mode scan. Device discovery uses the
+Core's discovered-device list; per-device status reads are limited to the
+configured device-detail rows. ID-mode status requests are queued with at most
+four peripheral requests in flight.
 
 ### ID Mode Pairing
 

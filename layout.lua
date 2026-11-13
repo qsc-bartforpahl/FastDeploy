@@ -138,15 +138,33 @@ if CurrentPage == "Main UI" then
     StrokeColor = {120, 120, 120},
     CornerRadius = 6,
     Position = {38,374},
-    Size = {309,89},
+    Size = {309,119},
     FontSize = 12,
     HTextAlign = "Left"
   })
 
   table.insert(graphics, {
     Type = "Text",
+    Text = "Location",
+    Position = {46,390},
+    Size = {293,16},
+    FontSize = 12,
+    Color = {0, 0, 0},
+    HTextAlign = "Left"
+  })
+
+  layout["InventoryLocation"] = {
+    PrettyName = "Inventory~Location",
+    Style = "ComboBox",
+    Position = {46,407},
+    Size = {293,22},
+    FontSize = 12
+  }
+
+  table.insert(graphics, {
+    Type = "Text",
     Text = "Model",
-    Position = {46,403},
+    Position = {46,431},
     Size = {136,16},
     FontSize = 12,
     Color = {0, 0, 0},
@@ -156,15 +174,15 @@ if CurrentPage == "Main UI" then
   layout["InventoryModel"] = {
     PrettyName = "Inventory~Model",
     Style = "ComboBox",
-    Position = {46,424},
-    Size = {136,26},
+    Position = {46,446},
+    Size = {136,24},
     FontSize = 12
   }
   
   table.insert(graphics, {
     Type = "Text",
     Text = "Name",
-    Position = {196,403},
+    Position = {196,431},
     Size = {136,16},
     FontSize = 12,
     Color = {0, 0, 0},
@@ -174,9 +192,25 @@ if CurrentPage == "Main UI" then
   layout["InventoryName"] = {
     PrettyName = "Inventory~Name",
     Style = "ComboBox",
-    Position = {196,424},
-    Size = {136,26},
+    Position = {196,446},
+    Size = {136,24},
     FontSize = 11
+  }
+
+  layout["PrevDevice"] = {
+    PrettyName = "Inventory~Prev Device",
+    Style = "Button",
+    Position = {46,472},
+    Size = {136,18},
+    Legend = "Prev Device"
+  }
+
+  layout["NextDevice"] = {
+    PrettyName = "Inventory~Next Device",
+    Style = "Button",
+    Position = {196,472},
+    Size = {136,18},
+    Legend = "Next Device"
   }
 
   -- Peripheral section
@@ -188,7 +222,7 @@ if CurrentPage == "Main UI" then
     StrokeColor = {0,0,0},
     CornerRadius = 8,
     Position = {362,374},
-    Size = {225,89},
+    Size = {225,119},
     FontSize = 12,
     HTextAlign = "Left"
   })
@@ -228,7 +262,7 @@ if CurrentPage == "Main UI" then
     StrokeWidth = 1,
     StrokeColor = {0,0,0},
     CornerRadius = 8,
-    Position = {38,476},
+    Position = {38,502},
     Size = {549,78},
     FontSize = 12,
     HTextAlign = "Left"
@@ -237,7 +271,7 @@ if CurrentPage == "Main UI" then
   layout["IPMode"] = {
     PrettyName = "Network~IP Mode",
     Style = "Button",
-    Position = {46,502},
+    Position = {46,528},
     Size = {110,35},
     Color = {105,105,105},
     Legend = "DHCP"
@@ -250,7 +284,7 @@ if CurrentPage == "Main UI" then
     StrokeWidth = 1,
     StrokeColor = {0,0,0},
     CornerRadius = 8,
-    Position = {227,494},
+    Position = {227,520},
     Size = {270,48},
     FontSize = 12,
     HTextAlign = "Left"
@@ -261,7 +295,7 @@ if CurrentPage == "Main UI" then
   layout["ThirdOctet"] = {
     PrettyName = "IP~Third Octet",
     Style = "ComboBox",
-    Position = {362,521},
+    Position = {362,547},
     Size = {61,16},
     FontSize = 12
   }
@@ -269,7 +303,7 @@ if CurrentPage == "Main UI" then
   layout["LastOctet"] = {
     PrettyName = "IP~Last Octet",
     Style = "ComboBox",
-    Position = {431,521},
+    Position = {431,547},
     Size = {61,16},
     FontSize = 12
   }
@@ -277,7 +311,7 @@ if CurrentPage == "Main UI" then
   layout["BaseOctets 1"] = {
     PrettyName = "IP~First Octet",
     Style = "Text",
-    Position = {230,521},
+    Position = {230,547},
     Size = {61,16},
     FontSize = 12,
     Fill = {255,255,255},
@@ -286,7 +320,7 @@ if CurrentPage == "Main UI" then
   layout["BaseOctets 2"] = {
     PrettyName = "IP~Second Octet",
     Style = "Text",
-    Position = {296,521},
+    Position = {296,547},
     Size = {61,16},
     FontSize = 12,     
   }
@@ -294,7 +328,7 @@ if CurrentPage == "Main UI" then
   table.insert(graphics, {
     Type = "Text",
     Text = ".",
-    Position = {291,526},
+    Position = {291,552},
     Size = {6,11},
     FontSize = 12,
     Color = {0,0,0},
@@ -304,7 +338,7 @@ if CurrentPage == "Main UI" then
   table.insert(graphics, {
     Type = "Text",
     Text = ".",
-    Position = {357,526},
+    Position = {357,552},
     Size = {6,11},
     FontSize = 12,
     Color = {0,0,0},
@@ -313,7 +347,7 @@ if CurrentPage == "Main UI" then
   table.insert(graphics, {
     Type = "Text",
     Text = ".",
-    Position = {426,526},
+    Position = {426,552},
     Size = {6,11},
     FontSize = 12,
     Color = {0,0,0},
@@ -327,7 +361,7 @@ if CurrentPage == "Main UI" then
     StrokeWidth = 1,
     StrokeColor = {0,0,0},
     CornerRadius = 8,
-    Position = {38,564},
+    Position = {38,590},
     Size = {549,149},
     FontSize = 12,
     HTextAlign = "Left"
@@ -336,8 +370,8 @@ if CurrentPage == "Main UI" then
   layout["PairingByNameDebug"] = {
     PrettyName = "Debug~Status",
     Style = "Text",
-    Position = {145,576},
-    Size = {347,131},
+    Position = {145,602},
+    Size = {347,105},
     IsReadOnly = true,
     Color = {239, 205, 205},
     StrokeColor = {0,0,0},
@@ -353,7 +387,7 @@ if CurrentPage == "Main UI" then
     StrokeWidth = 1,
     StrokeColor = {0,0,0},
     CornerRadius = 8,
-    Position = {602,564},
+    Position = {602,590},
     Size = {152,149},
     FontSize = 12,
     Color = {0,0,0}
@@ -362,7 +396,7 @@ if CurrentPage == "Main UI" then
   table.insert(graphics, {
     Type = "Text",
     Text = "Press\nReset Name\nto revert name to\nFactory Default",
-    Position = {613,586},
+    Position = {613,612},
     Size = {129,77},
     FontSize = 10,
     Color = {0,0,0},
@@ -372,7 +406,7 @@ if CurrentPage == "Main UI" then
   layout["ResetName"] = {
     PrettyName = "Action~Reset Name",
     Style = "Button",
-    Position = {635,675},
+    Position = {635,701},
     Size = {95,32},
     Color = {255, 255, 0},
     Legend = "Reset Name"
