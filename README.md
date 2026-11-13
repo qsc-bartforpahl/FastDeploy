@@ -1,6 +1,6 @@
 # Fast Deploy Plugin
 
-Version: 1.5.1  
+Version: 1.5.3
 Author: Bartholomew Forpahl
 
 ## Description
@@ -23,7 +23,20 @@ The plugin contains three pages:
 ## Properties
 
 - **Debug Print**: Controls debug output level
-- **Device Count**: Sets the number of devices that can be displayed in the device list (range: 1-100, default: 15)
+- **Device Count**: Sets the number of device detail rows (range: 1-150, default: 50)
+
+On the **Network Device List** page, use the model filter to focus the detail
+table on one peripheral model or select **All Models**. Changing the filter
+uses the latest discovery results; press **Refresh** to query the Core again.
+The table displays up to the configured Device Count and 150 devices, sorted by
+name. It reports the matching and displayed counts and warns when more than
+150 devices match. All discovered devices remain available to the pairing
+workflow.
+
+Status XML is requested only for displayed rows, with at most four peripheral
+requests in flight. Changing the filter cancels queued detail reads for the
+previous view, and late responses cannot overwrite the currently displayed
+devices.
 
 ## Usage
 

@@ -161,8 +161,23 @@ table.insert(ctrls, {
 
 
 -- Device List (dynamic count based on properties)
-local deviceCount = props["Device Count"].Value
+local deviceCount = math.max(1, math.min(150, props["Device Count"].Value))
 print("deviceCount: "..deviceCount)
+table.insert(ctrls, {
+  Name = "DeviceModelFilter",
+  ControlType = "Text",
+  Constraint = "List",
+  UserPin = true,
+  PinStyle = "Input",
+  Count = 1
+})
+
+table.insert(ctrls, {
+  Name = "DeviceListSummary",
+  ControlType = "Text",
+  Count = 1
+})
+
 table.insert(ctrls, { 
   Name = "DeviceModel", 
   ControlType = "Text", 
@@ -379,4 +394,3 @@ table.insert(ctrls, {
   PinStyle = "Input",
   Count = 1
 })  
-

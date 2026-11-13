@@ -6,6 +6,15 @@ local function control()
   return {String = "", Boolean = false, Choices = {}, IsDisabled = false}
 end
 
+props = {}
+dofile("properties.lua")
+local deviceCountProperty
+for _, property in ipairs(props) do
+  if property.Name == "Device Count" then deviceCountProperty = property end
+end
+assert(deviceCountProperty and deviceCountProperty.Max == 150)
+assert(deviceCountProperty.Value == 50, "The default device count must remain unchanged")
+
 local function trackPeripheralRequest(request, method)
   requests[#requests + 1] = request
   local isPeripheral = request.Url:find("/cgi-bin/", 1, true)
@@ -25,11 +34,11 @@ local function trackPeripheralRequest(request, method)
   end
 end
 
-local function setup(keepPairing)
+local function setup(keepPairing, deviceCount)
   requests, delayed = {}, {}
   activePeripheralRequests, maxPeripheralRequests = 0, 0
   print = function() end
-  props = {["Device Count"] = {Value = 3}}
+  props = {["Device Count"] = {Value = deviceCount or 3}}
   ctrls = {}
   dofile("controls.lua")
   Controls = {}
@@ -148,6 +157,15 @@ local function finishConfiguration(code)
 end
 
 setup(true)
+assert(Controls.PairWithIdDirections[2].String:find("MODE: PAIR BY ID", 1, true))
+assert(Controls.PairWithIdDirections[2].String:find("KEEP PAIRING: ON", 1, true))
+assert(Controls.PairWithIdDirections[2].String:find("use Prev/Next", 1, true))
+Controls.KeepPairWithID.Boolean = false
+Controls.KeepPairWithID.EventHandler()
+assert(Controls.PairWithIdDirections[2].String:find("KEEP PAIRING: OFF", 1, true))
+assert(Controls.PairWithIdDirections[2].String:find("stops after one successful pair", 1, true))
+Controls.KeepPairWithID.Boolean = true
+Controls.KeepPairWithID.EventHandler()
 assert(Controls.InventoryName.Color == "")
 local polls = detectDevice()
 local firstDeviceIP = polls[1].Url:match("https://([^/]+)/")
@@ -212,6 +230,11 @@ assert(Controls.InventoryName.String == "")
 
 setup(true)
 PairingMode(false)
+assert(Controls.PairWithIdDirections[1].String:find("MODE: MANUAL PAIRING", 1, true))
+assert(Controls.PairWithIdDirections[1].String:find("Select location", 1, true))
+assert(Controls.PairWithIdDirections[1].String:find("Select model", 1, true))
+assert(Controls.PairWithIdDirections[1].String:find("Select inventory name", 1, true))
+assert(Controls.PairWithIdDirections[1].String:find("Press Assign to pair, or Reset Name", 1, true))
 requests = {}
 setPeripheral("Soundbar-A", "speaker-01", "", "", "", "auto")
 finishConfiguration()
@@ -301,6 +324,7 @@ assert(#matchingRequests("/cgi-bin/id_mode?mode=off") == 0)
 setup(true)
 PairingMode(false)
 assert(#Controls.InventoryLocation.Choices == 4)
+assert(Controls.PairWithIdDirections[1].String:find("MODE: MANUAL PAIRING", 1, true))
 assert(Controls.InventoryLocation.Choices[2] == "Room A")
 assert(Controls.InventoryLocation.Choices[3] == "Room B")
 assert(Controls.InventoryLocation.Choices[4] == "Unassigned")
@@ -364,6 +388,10 @@ coreDiscovery.EventHandler(nil, 200, discovered)
 assert(#Devices == 750, "The complete discovery data must be retained")
 assert(#matchingRequests("/cgi-bin/status_xml") == 3,
   "Discovery should enrich only the three visible device rows, not all 750")
+assert(Controls.DeviceModelFilter.String == "All Models")
+assert(Controls.DeviceModelFilter.Choices[1] == "All Models")
+assert(Controls.DeviceModelFilter.Choices[2] == "AMP-OTHER")
+assert(Controls.DeviceModelFilter.Choices[3] == "NL-SB42")
 assert(maxPeripheralRequests <= 4, "Discovery enrichment must respect the request limit")
 local requestIndex = 1
 while requestIndex <= #requests do
@@ -374,6 +402,82 @@ while requestIndex <= #requests do
   requestIndex = requestIndex + 1
 end
 assert(activePeripheralRequests == 0)
+
+requests = {}
+activePeripheralRequests, maxPeripheralRequests = 0, 0
+Controls.DeviceModelFilter.String = "AMP-OTHER"
+Controls.DeviceModelFilter.EventHandler()
+assert(#matchingRequests("/discovered_devices") == 0,
+  "Changing the model filter must reuse cached discovery")
+assert(#matchingRequests("/cgi-bin/status_xml") == 3,
+  "Changing model should read details only for the three displayed matches")
+assert(Controls.DeviceModel[1].String == "AMP-OTHER")
+assert(Controls.DeviceName[1].String == "network-device-011",
+  "Filtered rows must be sorted by name")
+assert(Controls.DeviceListSummary.String:find("Showing 3 of 740 matching devices", 1, true))
+local oldModelDetailRequests = matchingRequests("/cgi-bin/status_xml")
+requests = {}
+Controls.DeviceModelFilter.String = "NL-SB42"
+Controls.DeviceModelFilter.EventHandler()
+assert(#matchingRequests("/discovered_devices") == 0)
+assert(#matchingRequests("/cgi-bin/status_xml") == 1,
+  "New detail reads must share the same four-request concurrency limit")
+for _, request in ipairs(oldModelDetailRequests) do
+  request.EventHandler(nil, 200,
+    "<status><id_mode>off</id_mode><pretty_name>stale-model-detail</pretty_name></status>")
+end
+assert(Controls.DeviceModel[1].String == "NL-SB42")
+assert(Controls.DeviceName[1].String == "network-device-001")
+assert(Controls.DesignOnDevice[1].String ~= "stale-model-detail",
+  "Late status responses from a prior filter must not populate current rows")
+local selectedModelDetailRequests = matchingRequests("/cgi-bin/status_xml")
+assert(#selectedModelDetailRequests == 3,
+  "Expected three selected-model detail reads, got " .. #selectedModelDetailRequests)
+assert(maxPeripheralRequests <= 4)
+for _, request in ipairs(selectedModelDetailRequests) do
+  request.EventHandler(nil, 200,
+    "<status><id_mode>off</id_mode><pretty_name>selected-model-detail</pretty_name></status>")
+end
+assert(Controls.DesignOnDevice[1].String == "selected-model-detail")
+assert(Controls.DeviceListSummary.String:find("Showing 3 of 10 matching devices", 1, true))
+assert(activePeripheralRequests == 0)
+
+requests = {}
+activePeripheralRequests, maxPeripheralRequests = 0, 0
+Controls.DeviceModelFilter.String = "AMP-OTHER"
+Controls.DeviceModelFilter.EventHandler()
+local previousModelRequests = matchingRequests("/cgi-bin/status_xml")
+assert(#previousModelRequests == 3)
+requests = {}
+Controls.DeviceModelFilter.String = "NL-SB42"
+Controls.DeviceModelFilter.EventHandler()
+local firstSelectedModelRequest = matchingRequests("/cgi-bin/status_xml")
+assert(#firstSelectedModelRequest == 1)
+assert(firstSelectedModelRequest[1].Url:find("10.1.0.1", 1, true))
+requests = {}
+Controls.DeviceModelFilter.String = "AMP-OTHER"
+Controls.DeviceModelFilter.EventHandler()
+assert(#matchingRequests("/cgi-bin/status_xml") == 0,
+  "Queued requests from the previous filter must wait behind in-flight requests")
+for _, request in ipairs(previousModelRequests) do
+  request.EventHandler(nil, 200, "<status><id_mode>off</id_mode></status>")
+end
+firstSelectedModelRequest[1].EventHandler(nil, 200, "<status><id_mode>off</id_mode></status>")
+assert(#matchingRequests("/cgi-bin/status_xml") == 3)
+for _, request in ipairs(matchingRequests("/cgi-bin/status_xml")) do
+  assert(not request.Url:find("10.1.0.2/cgi-bin/status_xml", 1, true)
+    and not request.Url:find("10.1.0.3/cgi-bin/status_xml", 1, true),
+    "Canceled queued requests must not run after another filter change")
+end
+requestIndex = 1
+while requestIndex <= #requests do
+  local request = requests[requestIndex]
+  if request.Url:find("/cgi-bin/status_xml", 1, true) and not request.testCompleted then
+    request.EventHandler(nil, 200, "<status><id_mode>off</id_mode></status>")
+  end
+  requestIndex = requestIndex + 1
+end
+assert(maxPeripheralRequests <= 4 and activePeripheralRequests == 0)
 
 Controls.PairWithID.Boolean = true
 PairingMode(true)
@@ -412,6 +516,57 @@ assert(#matchingRequests("/cgi-bin/status_xml") == 10,
   "The full selected-model scan should include all ten matching peripherals")
 assert(maxPeripheralRequests <= 4, "Peripheral HTTP concurrency must never exceed four")
 assert(activePeripheralRequests == 0)
+
+setup(true, 150)
+local oversizedModelDiscovery = {}
+for i = 1, 200 do
+  oversizedModelDiscovery[i] = {
+    name = string.format("large-device-%03d", i),
+    lan_a_ip = string.format("10.2.0.%d", i),
+    part_number = "NL-LA12",
+    type = "peripheral"
+  }
+end
+requests = {}
+activePeripheralRequests, maxPeripheralRequests = 0, 0
+getDevices()
+coreDiscovery = nil
+for _, request in ipairs(requests) do
+  if request.Url:find("/discovered_devices", 1, true) then coreDiscovery = request end
+end
+assert(coreDiscovery)
+coreDiscovery.EventHandler(nil, 200, oversizedModelDiscovery)
+assert(#Devices == 200 and #Controls.DeviceModel == 150)
+assert(Controls.DeviceModel[1].String == "NL-LA12")
+assert(Controls.DeviceName[1].String == "large-device-001")
+assert(Controls.DeviceName[150].String == "large-device-150")
+assert(Controls.DeviceListSummary.String:find("Showing 150 of 200 matching devices", 1, true))
+assert(Controls.DeviceListSummary.String:find("WARNING: List capped at 150", 1, true))
+assert(#matchingRequests("/cgi-bin/status_xml") == 4,
+  "Detail reads must start in batches limited by the four-request scheduler")
+requestIndex = 1
+while requestIndex <= #requests do
+  local request = requests[requestIndex]
+  if request.Url:find("/cgi-bin/status_xml", 1, true) and not request.testCompleted then
+    request.EventHandler(nil, 200,
+      "<status><id_mode>off</id_mode><pretty_name>large-list-detail</pretty_name></status>")
+  end
+  requestIndex = requestIndex + 1
+end
+assert(#matchingRequests("/cgi-bin/status_xml") == 150)
+assert(maxPeripheralRequests <= 4)
+assert(activePeripheralRequests == 0)
+
+requests = {}
+getDevices()
+coreDiscovery = nil
+for _, request in ipairs(requests) do
+  if request.Url:find("/discovered_devices", 1, true) then coreDiscovery = request end
+end
+assert(coreDiscovery)
+coreDiscovery.EventHandler(nil, 500, "Core unavailable")
+assert(#Devices == 200, "Failed discovery must preserve the last successful catalog")
+assert(Controls.DeviceName[1].String == "large-device-001")
 
 print = report
 report("pair by ID tests passed")

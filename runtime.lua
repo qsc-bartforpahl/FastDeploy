@@ -12,6 +12,7 @@ tabModelNameLookup = {}     -- Lookup: device name -> index in tabModeltoName
 Peripherals = {}            -- Stores detailed peripheral configurations
 Cores = {}  
 tabDebugString = {}                -- Stores core device details
+DiscoveredDevices = {}
 Inventory = {
   Locations = {""},
   LocationsLookup = {},
@@ -43,13 +44,16 @@ local idModeClearingModel = nil
 local navigationCursorName = ""
 local lastSuccessfulInventoryName = ""
 local lastHandledInventoryName = ""
+local updateDeviceList
 local deviceDiscoveryGeneration = 0
+local deviceDetailViewGeneration = 0
 local discoveryInProgress = false
 local discoveryRefreshRequested = false
 local activeIDPollCycle = nil
 local peripheralRequestQueue = {}
 local peripheralRequestsInFlight = 0
 local MAX_CONCURRENT_PERIPHERAL_REQUESTS = 4
+local MAX_DEVICE_DETAIL_ROWS = 150
 -- Network globals
 broadcastRange = ""         -- Broadcast address for the network
 netMask = ""          -- Subnet mask for the network
@@ -443,9 +447,117 @@ inventoryTimer.EventHandler = updateInventory
 inventoryTimer:Start(5)
 updateInventory()
 
+updateDeviceList = function(forceDetailReads)
+  local models = {}
+  local modelLookup = {}
+  for _, device in ipairs(DiscoveredDevices) do
+    local model = device.model
+    local modelKey = string.upper(model or "")
+    if modelKey ~= "" and not modelLookup[modelKey] then
+      modelLookup[modelKey] = true
+      table.insert(models, model)
+    end
+  end
+  sortNames(models)
+  local modelChoices = {"All Models"}
+  for _, model in ipairs(models) do table.insert(modelChoices, model) end
+
+  local selectedModel = Controls.DeviceModelFilter.String
+  local selectedKey = string.upper(selectedModel or "")
+  local selectedIsValid = selectedKey == "ALL MODELS"
+  for i = 2, #modelChoices do
+    if string.upper(modelChoices[i]) == selectedKey then
+      selectedModel = modelChoices[i]
+      selectedIsValid = true
+      break
+    end
+  end
+  if not selectedIsValid then selectedModel = "All Models" end
+  Controls.DeviceModelFilter.Choices = modelChoices
+  Controls.DeviceModelFilter.String = selectedModel
+
+  local matches = {}
+  local filterKey = string.upper(selectedModel)
+  for _, device in ipairs(DiscoveredDevices) do
+    if filterKey == "ALL MODELS" or string.upper(device.model or "") == filterKey then
+      table.insert(matches, device)
+    end
+  end
+  table.sort(matches, function(a, b)
+    local lowerA, lowerB = string.lower(a.name), string.lower(b.name)
+    if lowerA == lowerB then return a.name < b.name end
+    return lowerA < lowerB
+  end)
+
+  deviceDetailViewGeneration = deviceDetailViewGeneration + 1
+  local viewGeneration = deviceDetailViewGeneration
+  cancelQueuedPeripheralRequests("device-detail")
+  DevicesLookup = {}
+  local rowCount = math.min(#Controls.DeviceModel, MAX_DEVICE_DETAIL_ROWS)
+  local displayedCount = math.min(#matches, rowCount)
+  for i = 1, #Controls.DeviceModel do
+    Controls.DeviceModel[i].String = ""
+    Controls.DeviceName[i].String = ""
+    Controls.DeviceIP[i].String = ""
+    Controls.DesignOnDevice[i].String = ""
+    Controls.DesignOnDevice[i].Color = ""
+    Controls.ID[i].String = ""
+    Controls.ID[i].Boolean = false
+    Controls.ID[i].Legend = "ID_OFF"
+    Controls.IDPairing[i].String = ""
+    Controls.PeripheralInfo[i].String = ""
+    Controls.DeviceModel[i].IsInvisible = true
+    Controls.DeviceName[i].IsInvisible = true
+    Controls.DeviceIP[i].IsInvisible = true
+    Controls.DesignOnDevice[i].IsInvisible = true
+    Controls.ID[i].IsInvisible = true
+    Controls.IDPairing[i].IsInvisible = true
+    Controls.PeripheralInfo[i].IsInvisible = true
+  end
+
+  for i = 1, displayedCount do
+    local device = matches[i]
+    Controls.DeviceModel[i].String = device.model or ""
+    Controls.DeviceName[i].String = device.name
+    Controls.DeviceIP[i].String = device.ip
+    Controls.DeviceModel[i].IsInvisible = false
+    Controls.DeviceName[i].IsInvisible = false
+    Controls.DeviceIP[i].IsInvisible = false
+    Controls.DesignOnDevice[i].IsInvisible = false
+    Controls.ID[i].IsInvisible = false
+    Controls.IDPairing[i].IsInvisible = false
+    Controls.PeripheralInfo[i].IsInvisible = false
+    DevicesLookup[device.name] = i
+    local peripheral = Peripherals[device.name]
+    if peripheral and peripheral.design and not forceDetailReads then
+      Controls.DesignOnDevice[i].String = peripheral.design
+      local colorMap = { [""] = "", [Controls.LocalDesignName.String] = "green" }
+      Controls.DesignOnDevice[i].Color = colorMap[peripheral.design] or "yellow"
+      Controls.ID[i].Legend = "ID: " .. string.upper(peripheral.id or "N/A")
+      Controls.ID[i].Boolean = peripheral.id == "on"
+    else
+      downloadFromPeripherals(
+        device.ip, device.name, i, deviceDiscoveryGeneration, viewGeneration
+      )
+    end
+  end
+
+  local summary = string.format(
+    "Showing %d of %d matching devices (Device Count: %d).",
+    displayedCount, #matches, #Controls.DeviceModel
+  )
+  if #matches > MAX_DEVICE_DETAIL_ROWS then
+    summary = summary .. " WARNING: List capped at 150; additional devices are not shown."
+  elseif #matches > displayedCount then
+    summary = summary .. string.format(
+      " Increase Device Count to show more (maximum %d).", MAX_DEVICE_DETAIL_ROWS
+    )
+  end
+  Controls.DeviceListSummary.String = summary
+end
 
 -- **Download configuration from a peripheral device**
-function downloadFromPeripherals(ip, name, t, generation)
+function downloadFromPeripherals(ip, name, t, generation, viewGeneration)
   DebugFunctionEntry("downloadFromPeripherals", ip, name, t)
   DebugPrint("Downloading configuration from " .. name .. " at " .. ip, "tx")
   
@@ -455,6 +567,8 @@ function downloadFromPeripherals(ip, name, t, generation)
     Headers = {},
     EventHandler = function(_, code, data)
       if generation and generation ~= deviceDiscoveryGeneration then return end
+      if viewGeneration and viewGeneration ~= deviceDetailViewGeneration then return end
+      if Controls.DeviceName[t].String ~= name then return end
       DebugNetworkResponse("https://" .. ip .. "/cgi-bin/status_xml", code, data)
       if code == 200 then
         DebugPrint("Received configuration from " .. name, "rx")
@@ -510,13 +624,13 @@ end
 function parseDevices(headers, code, data)
   DebugPrint("Starting device discovery", "function")
   if code ~= 200 then
-    DisplayPrint("Failed to fetch devices: " .. code)
-    DebugPrint("Failed to fetch devices: " .. code, "rx")
+    DisplayPrint("Failed to fetch devices: HTTP " .. tostring(code))
+    DebugPrint("Failed to fetch devices: " .. tostring(code), "rx")
     return
   end
   local decoded = rapidjson.decode(data)
-  t = 1
-
+  local discovered = {}
+  local cores = {}
   for _, elem in pairs(decoded) do
     if elem.type ~= "core" then
       if not elem.name or not elem.lan_a_ip then
@@ -527,40 +641,48 @@ function parseDevices(headers, code, data)
           DebugPrint("Refresh stopped for " .. elem.name, "function")
         end
         DebugPrint("Found device: " .. elem.name .. " with IP: " .. elem.lan_a_ip, "rx")
-        table.insert(Devices, elem.name)
-        table.insert(IPs, elem.lan_a_ip)
-        table.insert(DeviceTypes, elem.part_number)
-        DevicesAndIPs[elem.name] = elem.lan_a_ip
-        DeviceTypeLookup[elem.name] = elem.part_number or ""
-        Peripherals[elem.name] = {ip = elem.lan_a_ip}
-        modelHandling(elem.part_number, elem.name)
-        DevicesLookup[elem.name] = t
-        if t <= #Controls.DeviceModel then
-          downloadFromPeripherals(elem.lan_a_ip, elem.name, t, deviceDiscoveryGeneration)
-          Controls.DeviceModel[t].String = elem.part_number or ""
-          Controls.DeviceName[t].String = elem.name
-          Controls.DeviceIP[t].String = elem.lan_a_ip
-          Controls.DeviceModel[t].IsInvisible = false
-          Controls.DeviceName[t].IsInvisible = false
-          Controls.DeviceIP[t].IsInvisible = false
-          Controls.DesignOnDevice[t].IsInvisible = false
-          Controls.ID[t].IsInvisible = false
-          Controls.IDPairing[t].IsInvisible = false
-          Controls.PeripheralInfo[t].IsInvisible = false
-        end
-        t = t + 1
+        table.insert(discovered, {
+          name = elem.name,
+          ip = elem.lan_a_ip,
+          model = elem.part_number or ""
+        })
       end
     else
       DebugPrint("Found core device: " .. elem.name, "rx")
-      Cores[elem.name] = elem
+      cores[elem.name] = elem
     end
   end
+
+  table.sort(discovered, function(a, b)
+    local lowerA, lowerB = string.lower(a.name), string.lower(b.name)
+    if lowerA == lowerB then return a.name < b.name end
+    return lowerA < lowerB
+  end)
+
+  deviceDiscoveryGeneration = deviceDiscoveryGeneration + 1
+  cancelQueuedPeripheralRequests("device-detail")
+  Devices, IPs, DeviceTypes, DevicesAndIPs, DeviceTypeLookup = {}, {}, {}, {}, {}
+  tabModeltoName, tabModelNameLookup, DevicesLookup = {}, {}, {}
+  Peripherals, Cores = {}, cores
+  DiscoveredDevices = discovered
+  for _, device in ipairs(discovered) do
+    table.insert(Devices, device.name)
+    table.insert(IPs, device.ip)
+    table.insert(DeviceTypes, device.model)
+    DevicesAndIPs[device.name] = device.ip
+    DeviceTypeLookup[device.name] = device.model
+    Peripherals[device.name] = {ip = device.ip}
+    modelHandling(device.model, device.name)
+  end
+  for _, names in pairs(tabModeltoName) do sortNames(names) end
+
   local deviceChoices = {}
   for _, name in ipairs(Devices) do table.insert(deviceChoices, name) end
-  sortNames(deviceChoices)
   Controls.Device.Choices = deviceChoices
-  for _, names in pairs(tabModeltoName) do sortNames(names) end
+  Controls.AssignToDevice.String = ""
+  Controls.IPMode.Legend = getIPMode()
   refreshInventorySelectors()
+  updateDeviceList()
 end
 
 -- **Get IP mode (Static or DHCP) and update control states**
@@ -595,30 +717,6 @@ function getDevices()
   end
   discoveryInProgress = true
   discoveryRefreshRequested = false
-  deviceDiscoveryGeneration = deviceDiscoveryGeneration + 1
-  cancelQueuedPeripheralRequests("device-detail")
-  checkForReset ()
-  Controls.AssignToDevice.String = ""
-  t = 1
-  for i = 1, #Controls.DeviceModel do
-    Controls.DeviceModel[i].IsInvisible = true
-    Controls.DeviceName[i].IsInvisible = true
-    Controls.DeviceIP[i].IsInvisible = true
-    Controls.DesignOnDevice[i].IsInvisible = true
-    Controls.ID[i].IsInvisible = true
-    Controls.IDPairing[i].IsInvisible = true
-    Controls.PeripheralInfo[i].IsInvisible = true
-    Controls.DeviceModel[i].String = ""
-    Controls.DeviceName[i].String = ""
-    Controls.DeviceIP[i].String = ""
-    Controls.DesignOnDevice[i].String = ""
-    Controls.ID[i].String = ""
-    Controls.IDPairing[i].String = ""
-    Controls.PeripheralInfo[i].String = ""
-  end
-  Controls.IPMode.Legend = getIPMode()
-  Devices, IPs, DeviceTypes, DevicesAndIPs, DeviceTypeLookup, tabModeltoName, tabModelNameLookup = {}, {}, {}, {}, {}, {}, {}
-  DevicesLookup, Peripherals, Cores = {}, {}, {}
 
   local coreIP = ""
   for _, item in ipairs(Network.Interfaces()) do
@@ -782,12 +880,18 @@ function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode, onSucc
         Peripherals[newName] = peripheral
         DevicesAndIPs[newName] = peripheral.ip
         DeviceTypeLookup[newName] = model
-        local index = DevicesLookup[oldName]
-        if index then
-          Devices[index] = newName
-          DevicesLookup[newName] = index
-          Controls.DeviceName[index].String = newName
-          Controls.DeviceIP[index].String = peripheral.ip
+        for i, discoveredName in ipairs(Devices) do
+          if discoveredName == oldName then
+            Devices[i] = newName
+            break
+          end
+        end
+        for _, device in ipairs(DiscoveredDevices) do
+          if device.name == oldName then
+            device.name = newName
+            device.ip = peripheral.ip
+            break
+          end
         end
         for _, names in pairs(tabModeltoName) do
           for i, name in ipairs(names) do
@@ -798,12 +902,16 @@ function setPeripheral(oldName, newName, ip, netmask, defaultRoute, mode, onSucc
         if oldName ~= newName then
           Peripherals[oldName], DevicesAndIPs[oldName], DeviceTypeLookup[oldName], DevicesLookup[oldName] = nil, nil, nil, nil
         end
+        local deviceChoices = {}
+        for _, deviceName in ipairs(Devices) do table.insert(deviceChoices, deviceName) end
+        sortNames(deviceChoices)
+        Controls.Device.Choices = deviceChoices
         if Controls.InventoryName.String == newName and not (pairingByID and Controls.KeepPairWithID.Boolean) then
           Controls.InventoryName.String = ""
         end
         DebugPrint("Setting assign to device choices to empty", "function")
         Controls.AssignToDevice.Choices = {}
-        updateNavigationButtons()
+        updateDeviceList()
         if onSuccess then onSuccess() end
       else
         DebugPrint("Failed to configure " .. newName .. ": " .. tostring(data), "rx")
@@ -1362,6 +1470,9 @@ Controls.Device.EventHandler = function()
 end
 
 Controls.Get.EventHandler = getDevices
+Controls.DeviceModelFilter.EventHandler = function()
+  updateDeviceList(true)
+end
 
 Controls.Reboot.EventHandler = function()
   HttpClient.Download({
@@ -1481,61 +1592,52 @@ end
 Controls.PairWithIdDontShowAdgain.EventHandler = hidePairIdWarning
 
 function buildDirectionsString()
-    -- Check if inventory name, model, and device are selected
-    if Controls.InventoryName.String == "" then
-        namecheckID = false
-    end
-    
-    if Controls.InventoryModel.String == "" then
-        modelcheckID = false
-    end
-    
-    if Controls.AssignToDevice.String == "" then
-        peripheralcheckID = false
-    end
+  local locationSelected = Controls.InventoryLocation.String ~= ""
+  local modelSelected = Controls.InventoryModel.String ~= ""
+  local nameSelected = Controls.InventoryName.String ~= ""
+  local peripheralSelected = Controls.AssignToDevice.String ~= ""
+  local function step(number, text, complete)
+    return number .. ". " .. text .. (complete and " ✓" or "")
+  end
 
-    -- First directions string (for PairWithIdDirections[1])
-    local header1 = "Follow these steps to pair a device to the system:"
-    local step1 = "1. Select a model from the inventory" .. (modelcheckID and " ✓" or "")
-  local step2 = "2. Select a name from the inventory" .. (namecheckID and " ✓" or "")
-  local step3 = "3. Select the Peripheral to pair" .. (peripheralcheckID and " ✓" or "")
-  local step4 = "4. Press the green button"
-  
-  local directions1 = header1 .. "\n" .. step1
-  Controls.Assign.Legend = "Select Model\nand\nName"
-  if modelcheckID then
-    directions1 = directions1 .. "\n" .. step2
-    Controls.Assign.Legend = "Select Model\nand\nName"
-  end
-  
-  if modelcheckID and namecheckID then
-    directions1 = directions1 .. "\n" .. step3
-    Controls.Assign.Legend = "Select\nPeripheral"
-  end
-  if modelcheckID and namecheckID and peripheralcheckID then
-    directions1 = directions1 .. "\n" .. step4
-    Controls.Assign.Legend = "Assign\nPeripheral"
-  end
-  Controls.PairWithIdDirections[1].String = directions1
+  if Controls.PairWithID.Boolean then
+    local keepPairing = Controls.KeepPairWithID.Boolean
+    local keepLabel = keepPairing and "ON" or "OFF"
+    local directions = "MODE: PAIR BY ID  |  KEEP PAIRING: " .. keepLabel
+    if keepPairing then
+      directions = directions .. "\nAfter pairing, use Prev/Next to move through names."
+    else
+      directions = directions .. "\nKeep Pairing off stops after one successful pair."
+    end
+    directions = directions
+      .. "\n" .. step("1", "Select location", locationSelected)
+      .. "\n" .. step("2", "Select model", modelSelected)
+      .. "\n" .. step("3", "Select inventory name", nameSelected)
+      .. "\n4. Press ID on the intended peripheral to pair."
+    Controls.PairWithIdDirections[1].String = ""
+    Controls.PairWithIdDirections[2].String = directions
+    Controls.Assign.Legend = "Pair\nby ID"
+  else
+    local directions = "MODE: MANUAL PAIRING"
+      .. "\n" .. step("1", "Select location", locationSelected)
+      .. "\n" .. step("2", "Select model", modelSelected)
+      .. "\n" .. step("3", "Select inventory name", nameSelected)
+      .. "\n" .. step("4", "Select peripheral", peripheralSelected)
+      .. "\n5. Press Assign to pair, or Reset Name to restore factory name."
+    Controls.PairWithIdDirections[1].String = directions
+    Controls.PairWithIdDirections[2].String = ""
 
-  -- Second directions string (for PairWithIdDirections[2])
-  local header2 = "--Caution! Pairing with ID is not supported on all devices.   \n--Make sure that only you perform this operation. \n--Be careful not to pair with a device outside \n of the devices meant for this system. \n\n"
-  local step1_id = "1. Select a model from the inventory" .. (modelcheckID and " ✓" or "")
-  local step2_id = "2. Select a name from the inventory" .. (namecheckID and " ✓" or "")
-  local step3_id = "3. Press the ID button on the device"
-  
-  local directions2 = header2 .. "\n" .. step1_id
-  
-  if modelcheckID then
-    directions2 = directions2 .. "\n" .. step2_id
+    if not locationSelected or not modelSelected or not nameSelected then
+      Controls.Assign.Legend = "Select Model\nand\nName"
+    elseif not peripheralSelected then
+      Controls.Assign.Legend = "Select\nPeripheral"
+    else
+      Controls.Assign.Legend = "Assign\nPeripheral"
+    end
   end
-  
-  if modelcheckID and namecheckID then
-    directions2 = directions2 .. "\n" .. step3_id
-  end
-  
-  Controls.PairWithIdDirections[2].String = directions2
 end
+
+Controls.KeepPairWithID.EventHandler = buildDirectionsString
 
 -- Initial device discovery
 getDevices()
